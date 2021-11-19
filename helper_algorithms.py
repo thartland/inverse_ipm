@@ -4,6 +4,8 @@ import scipy.sparse.linalg as spla
 
 import dolfin as dl
 dl.parameters['reorder_dofs_serial']= False
+import matplotlib.pyplot as plt
+from hippylib import nb
 
 class interior_pt:
     def __init__(self, problem, Vhs):
@@ -52,30 +54,30 @@ class interior_pt:
         self.theta_min = 1.e-4
 
         # constants in line-step A-5.4
-        self.delta  = 1.e-2
+        self.delta  = 1.#1.e-2
         self.stheta = 1. + 1.e-2
         self.sphi   = 1.
 
         # control the rate at which the penalty parameter is decreased
-        self.kmu = 0.5
-        self.thetamu = 1.1
+        self.kmu = 0.8
+        self.thetamu = 1.5
 
         # the Filter
         self.F = []
 
         # maximum constraint violation
-        self.thetamax = 1.
+        self.thetamax = 1.e6
 
         # data for second order correction
         self.ck_soc = 0.
         self.k_soc  = 0.5
 
         # equation (18)
-        self.gtheta = 0.5
-        self.gphi   = 0.5
+        self.gtheta = 1.e-5#0.5
+        self.gphi   = 1.e-5#0.5
 
         #
-        self.keps = 0.1
+        self.keps = 10.
 
         
     def initialize(self, X):
@@ -120,7 +122,7 @@ class interior_pt:
     def pKKT_solve(self, X, mu):
         x, p, z = X[:]
         xhat      = dl.Function(self.Vhs[0])
-        phat    = dl.Function(self.Vhs[1])
+        phat      = dl.Function(self.Vhs[1])
         zhat      = dl.Function(self.Vhs[2])
 
         Hk, dr, r4 = self.formH(X, mu)
@@ -130,10 +132,10 @@ class interior_pt:
         rk[self.n:] = self.problem.c(x)
         rk[self.n1:self.n] += dr[:]
         
-
-        sol = spla.spsolve(Hk, -1.*rk)
-        print("linearized KKT sys residual = {0:1.3e}".format(np.linalg.norm(
-        Hk.dot(sol) + rk) / np.linalg.norm(rk)))
+        solver = spla.splu(Hk)
+        sol = solver.solve(-1.*rk)
+        #sol = spla.spsolve(Hk, -1.*rk)
+        print("KKT residual = {0:1.2e}".format(np.linalg.norm(Hk.dot(sol) + rk)))
         xhat.vector().set_local(sol[:self.n])
         phat.vector().set_local(sol[self.n:])
         
@@ -154,13 +156,16 @@ class interior_pt:
         rk[:self.n] = self.problem.DxL(X)
         rk[self.n:] = self.ck_soc[:]
         rk[self.n1:self.n] += dr[:]
-        sol = spla.spsolve(Hk, -1.*rk)
+        solver = spla.splu(Hk)
+        sol = solver.solve(-1.*rk)
+        #sol = spla.spsolve(Hk, -1.*rk)
+        print("KKT residual = {0:1.2e}".format(np.linalg.norm(Hk.dot(sol) + rk)))
         xhat.vector().set_local(sol[:self.n])
         phat.vector().set_local(sol[self.n:])
         
         
-        zhatnp = -1.*(r4 + z.vector().get_local()[:] * xhat.vector().get_local()[self.n1:]) / \
-                     (x.vector().get_local()[self.n1:] - self.ml.vector()[:])
+        zhatnp = -1.*(r4 + z.vector()[:] * xhat.vector()[self.n1:]) / \
+                     (x.vector()[self.n1:] - self.ml.vector()[:])
         zhat.vector().set_local(zhatnp)
         return xhat, phat, zhat
 
@@ -209,24 +214,30 @@ class interior_pt:
         print("alphaz = {0:1.3e}".format(alphaz))
         # END A-5.1.
 
-        max_backtrack     = 15
+        max_backtrack     = 20
         it_backtrack      = 0
         
         xtrial = dl.Function(self.Vhs[0])
         x_soc  = dl.Function(self.Vhs[0])
         # A-5.2--> A-5.10 --> A-5.2 --> ... loop
         while it_backtrack < max_backtrack:
-            # A-5.2.
+            # ------ A-5.2.
             xtrial.assign(x)
             xtrial.vector().axpy(alpha, xhat.vector())
-            Dxphi_xhat = np.dot(self.problem.Dxphi(x, mu), xhat.vector().get_local())
-            # A.5.3
+            # ------
+            
+            # ------ A.5.3
             # if not in filter region go to A.5.4, potential exit and then A.5.5
             # else go to A.5.5
+            Dxphi_xhat = np.dot(self.problem.Dxphi(x, mu), xhat.vector().get_local())
+            print("in filter region? ", self.filter_check(self.problem.theta(xtrial), self.problem.phi(xtrial, mu)))
             if not self.filter_check(self.problem.theta(xtrial), self.problem.phi(xtrial, mu)):
-                # A.5.4: Check sufficient decrease
+                # ------ A.5.4: Check sufficient decrease
                 # CASE I
                 print("A.5.4")
+                print("theta(x) = {0:1.2e}".format(self.problem.theta(x)))
+                print("descent direction? ", Dxphi_xhat < 0.)
+                print("theta(x) < theta_min? ", self.problem.theta(x) <= self.theta_min)
                 if self.problem.theta(x) <= self.theta_min and Dxphi_xhat < 0. \
                         and alpha*(-1.*Dxphi_xhat)**self.sphi > \
                             self.delta*(self.problem.theta(x))**self.stheta:
@@ -235,6 +246,8 @@ class interior_pt:
                                return xtrial, xhat, lamhat, alpha, alphaz, True # return the trial step
                 # CASE II
                 else:
+                    print("phi(xtrial) <= phi(x) - gphi theta(x) ? ", \
+                          self.problem.phi(xtrial, mu) <= self.problem.phi(x,mu) - self.gphi *self.problem.theta(x))
                     if self.problem.theta(xtrial) <= (1.-self.gtheta)*self.problem.theta(x) or \
                         self.problem.phi(xtrial, mu) <= self.problem.phi(x, mu) - \
                         self.gphi*self.problem.theta(x):
@@ -242,9 +255,10 @@ class interior_pt:
                             return xtrial, xhat, lamhat, alpha, alphaz, True
             # A.5.5: Initialize the second order correction
             print("A.5.5")
+            print("theta(xtrial) = {0:1.2e}, theta(x) = {1:1.2e}".format(self.problem.theta(xtrial), self.problem.theta(x)))
             if not (it_backtrack > 0 or self.problem.theta(xtrial) < self.problem.theta(x)):
                 p = 1
-                maxp = 100
+                maxp = 4
                 # equation (27)
                 self.ck_soc = alpha*self.problem.c(x) + self.problem.c(xtrial)
                 theta_old_sc = self.problem.theta(xtrial)
@@ -337,6 +351,11 @@ class interior_pt:
         mu  = mu0
         self.it = 0
         self.X[0].vector().set_local(np.ones(self.Vhs[0].dim()))
+        self.X[1].vector().set_local(np.ones(self.Vhs[1].dim()))
+        self.X[2].vector().set_local(np.ones(self.Vhs[2].dim()))
+        theta0 = self.problem.theta(self.X[0])
+        self.theta_min = 1.e-4*max(1., theta0)
+        self.thetamax  = 1.e4*max(1., theta0)
         Es = []
         Mus = []
         while self.it < max_iterations:
@@ -367,11 +386,12 @@ class interior_pt:
             # -------- Determine appropriate step length
             # A-5 Backtracking line-search
             x, xhat, lamhat, alpha, alphaz, linesearch_success = self.line_search(self.X, self.Xhat, mu, tau)
+            print("linesearch success? ", linesearch_success)
             # check if line search was successful if not we restore feasibility
             if linesearch_success:
                 # check if either (19) or (20) do not hold
-                filter_augment = False
-                Dx_phi_xhat = np.dot(self.problem.Dxphi(self.X[0], mu), xhat.vector().get_local())
+                #filter_augment = False
+                Dx_phi_xhat = np.dot(self.problem.Dxphi(self.X[0], mu), xhat.vector()[:])
                 if not (Dx_phi_xhat < 0. or alpha*(-Dx_phi_xhat)**self.sphi > \
                     self.delta*(self.problem.theta(self.X[0]))**self.stheta) \
                     or not (self.problem.phi(x, mu) <= self.problem.phi(self.X[0], mu) + \
@@ -383,8 +403,14 @@ class interior_pt:
                 self.X[1].vector().axpy(alpha, lamhat.vector())
                 self.X[2].vector().axpy(alphaz, self.Xhat[2].vector())
                 self.X[2].vector().set_local(self.project_z(self.X, mu))
+                nb.plot(self.X[0].sub(0, deepcopy=True))
+                plt.show()
+                nb.plot(self.X[0].sub(1, deepcopy=True))
+                plt.show()
             else:
                 print("feasibility restoration")
+                if self.problem.theta(self.X[0]) < 1.e-10:
+                    print("ATTEMPTING TO RESTORE FEASIBILITY WHEN ITERATE IS FEASIBLE")
                 # A-9 
                 # Augment the filter
                 self.F.append([(1.-self.gtheta)*self.problem.theta(self.X[0]),\
