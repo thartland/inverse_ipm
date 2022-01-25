@@ -116,7 +116,7 @@ class interior_pt:
         JkT = Jk.transpose()
         
         Ak = sps.bmat([[Hk[:self.n1, :self.n1], Hk[:self.n1, self.n1:], JkT[:self.n1,:]],\
-                [Hk[self.n1:, :self.n1], Hk[self.n1:, self.n1:] + dHrhorho, JkT[self.n1:]],\
+                [Hk[self.n1:, :self.n1], Hk[self.n1:, self.n1:] + dHrhorho, JkT[self.n1:, :]],\
                 [Jk[:, :self.n1], Jk[:, self.n1:], None]], format="csr")
         """
         By eliminating the bound-constraint multiplier, the rhs of the IP-Newton system is altered by dr
@@ -152,6 +152,7 @@ class interior_pt:
         if soc:
             Ak[:self.n,:self.n] += self.deltalast * sps.identity(self.n)
         sol = spla.spsolve(Ak, -rk)
+        #sol = np.linalg.solve(Ak.todense(), -rk)
         print("KKT sys error = {0:1.3e}".format(np.linalg.norm(Ak.dot(sol) + rk)/np.linalg.norm(rk)))
 
         """
@@ -187,6 +188,7 @@ class interior_pt:
                                     [Ak[:self.idx1, self.idx1:], None]], format="csr")
                 Wk        = Akdelta[:self.idx1, :self.idx1]
                 sol       = spla.spsolve(Akdelta, -rk)
+                #sol       = np.linalg.solve(Akdelta.todense(), -rk)
                 xhat[:]   = sol[:self.idx1]
                 lamhat[:] = sol[self.idx1:]
                 lamplus   = (lamhat + lam)

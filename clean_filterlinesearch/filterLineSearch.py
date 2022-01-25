@@ -127,7 +127,7 @@ class interior_pt:
         By eliminating the bound-constraint multiplier, the rhs of the IP-Newton system is altered by dr
         """
         drk    = -mu / (rho - self.rhol)
-        return Ak, drk
+        return Ak, Jk, drk
     """ 
     determine the solution
     of the perturbed KKT conditions
@@ -141,9 +141,10 @@ class interior_pt:
         lamhat    = np.zeros(self.m)
         zhat      = np.zeros(self.n2)
 
-        Ak, drk = self.formH(X, mu)
+        Ak, Jk, drk = self.formH(X, mu)
+        JkT = Jk.T
         rk = np.zeros(self.n+self.m)
-        rk[:self.n] = self.problem.Dxf(x) + np.dot(lam, self.problem.Dxc(x))
+        rk[:self.n] = self.problem.Dxf(x) + JkT.dot(lam)
         if not soc:
             rk[self.n:] = self.problem.c(x)[:]
         else:
