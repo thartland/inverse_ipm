@@ -55,10 +55,11 @@ class Krylov_convergence:
         me.residuals = list()
         me.A = A
         me.b = b
-    def callback(me, xk):
+    def callback(me, rk):
         k = me.counter[0]
         me.counter[0] = k+1
-        res = np.linalg.norm(me.A.dot(xk) - me.b) / np.linalg.norm(me.b)
+        #res = np.linalg.norm(me.A.dot(xk) - me.b) / np.linalg.norm(me.b)
+        res = np.linalg.norm(rk) / np.linalg.norm(me.b)
         me.residuals.append(res)
     def reset(me):
         me.counter = [0,]
@@ -105,74 +106,67 @@ class multigridHierarchy:
         me.Lfine   = None
         me.Lcoarse = None
         me.S       = None
+        me.Spre    = None
+        me.Spost   = None
     # from a fine grid point X = x, lam, z
     # construct the Uzawa smoothers...
     # construct and output two_grid action operator...
-    def constructPreconditioner(me, X, smoother='Uzawa', IPsys=True):
-        x, lam, z = X[:]
-        n1 = me.problems[-1].n1
-        rho = x[n1: ]
-        Hk  = me.problems[-1].DxxL(X)
-        Jk  = me.problems[-1].Dxc(x)
-        JkT = Jk.transpose()
-        dHk = sps.diags(z / (rho - me.problems[-1].rhol))
-        if IPsys:
-            Wk  = sps.bmat([[Hk[:n1, :n1], Hk[:n1, n1:]],\
-                        [Hk[n1:, :n1], Hk[n1:, n1:] + dHk]], format="csr")
-        else:
-            Wk = Hk
-
+    def constructPreconditioner(me, Wk, JkT, Jk, n1):#X):
+        #x, lam, z = X[:]
+        #n1 = me.problems[-1].n1
+        #rho = x[n1: ]
+        #Hk  = me.problems[-1].DxxL(X)
+        #Jk  = me.problems[-1].Dxc(x)
+        #JkT = Jk.transpose()
+        #dHk = sps.diags(z / (rho - me.problems[-1].rhol))
+        #Wk  = sps.bmat([[Hk[:n1, :n1], Hk[:n1, n1:]],\
+        #            [Hk[n1:, :n1], Hk[n1:, n1:] + dHk]], format="csr")
+        
         # fine grid operator
         me.Lfine = sps.bmat([[Wk, JkT],\
                              [Jk, None]], format="csr")
 
 
-        # determine the smoother
-        n = me.problems[-1].n
-        m = me.problems[-1].m
-        if smoother == 'Uzawa':
-            me.S = Uzawa(Wk, JkT, Jk, n + m, n, 0.0)
-            w, its = power_iteration(me.S.Schur_mult, m)[1:]
-            print("KKT system Schur complement max eigenvalue = {0:1.2e} converged in {1:d} iterations".format(w, its))
-            me.S.w = 0.5 / w
-        else:
-            me.S = ILUsmoother(me.Lfine)
+        me.Spre  = ConstrainedPreSmoother(Wk, JkT, Jk, n1)
+        me.Spost = ConstrainedPostSmoother(Wk, JkT, Jk, n1)
+
+        me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
+        
 
 
         # coarse grid operator
-        n1coarse  = me.problems[0].n1
-        xcoarse   = me.Rx.dot(x)
-        rhocoarse = xcoarse[n1coarse:]
-        lamcoarse = me.R_state.dot(lam)
+        #n1coarse  = me.problems[0].n1
+        #xcoarse   = me.Rx.dot(x)
+        #rhocoarse = xcoarse[n1coarse:]
+        #lamcoarse = me.R_state.dot(lam)
 
-        zcoarse   = me.problems[0].Mm.dot(me.R_rho.dot(np.linalg.solve(me.problems[-1].Mm, z)))
+        #zcoarse   = me.problems[0].Mm.dot(me.R_rho.dot(np.linalg.solve(me.problems[-1].Mm, z)))
         #zcoarse = me.R_rho.dot(z)
-        Xcoarse = [xcoarse, lamcoarse, zcoarse]
+        #Xcoarse = [xcoarse, lamcoarse, zcoarse]
 
-        Hkcoarse  = me.problems[0].DxxL(Xcoarse)
-        Jkcoarse  = me.problems[0].Dxc(xcoarse)
-        JkTcoarse = Jkcoarse.transpose()
-        dHkcoarse = sps.diags(zcoarse / (rhocoarse - me.problems[0].rhol))
-        if IPsys:
-            Wkcoarse  = sps.bmat([[Hkcoarse[:n1coarse, :n1coarse], Hkcoarse[:n1coarse, n1coarse:]],\
-                              [Hkcoarse[n1coarse:, :n1coarse], Hkcoarse[n1coarse:, n1coarse:] + dHkcoarse]],\
-                            format="csr")
-        else:
-            Wkcoarse = Hkcoarse
+        #Hkcoarse  = me.problems[0].DxxL(Xcoarse)
+        #Jkcoarse  = me.problems[0].Dxc(xcoarse)
+        #JkTcoarse = Jkcoarse.transpose()
+        #dHkcoarse = sps.diags(zcoarse / (rhocoarse - me.problems[0].rhol))
+        #if IPsys:
+        #    Wkcoarse  = sps.bmat([[Hkcoarse[:n1coarse, :n1coarse], Hkcoarse[:n1coarse, n1coarse:]],\
+        #                      [Hkcoarse[n1coarse:, :n1coarse], Hkcoarse[n1coarse:, n1coarse:] + dHkcoarse]],\
+        #                    format="csr")
+        #else:
+        #    Wkcoarse = Hkcoarse
 
         # coarse grid operator
-        me.Lcoarse = sps.bmat([[Wkcoarse, JkTcoarse],\
-                               [Jkcoarse, None]], format="csr")
+        #me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
+        #me.Lcoarse = sps.bmat([[Wkcoarse, JkTcoarse],\
+        #                       [Jkcoarse, None]], format="csr")
 
 
 
 class Uzawa:
-    def __init__(me, A11, A12, A21, n, idx0, w, M=None):
+    def __init__(me, A11, A12, A21, w, M=None):
         # size of operator
-        me.n     = n
-        
-        # indicies for the block splitting defined by the Uzawa
-        me.idx0 = idx0
+        me.n     = A11.shape[0] + A21.shape[0]
+        me.idx0 = A11.shape[0]
         
         """
         The Uzawa smoother is for saddle point systems, with system
@@ -184,7 +178,6 @@ class Uzawa:
         me.A12 = A12
         me.A21 = A21
         
-        me.idx0 = A11.shape[0]
         """
         Define a `mass-matrix' preconditioner for the A11 subblock.
         """        
@@ -216,6 +209,229 @@ class Uzawa:
         r1 = spla.spsolve(me.A11, x[:me.idx0])
         r2 = me.A21.dot(r1)
         return r2 - x[me.idx0:]
+
+class ConstrainedSmoother:
+    def __init__(me, W, JT, J, n1, lumped=False):
+        # size of operator
+        me.n     = W.shape[0] + J.shape[0]
+        # splitting index
+        me.idx0  = W.shape[0]
+        me.n1 = n1
+
+        me.lumped=lumped
+        
+        """
+        This constrained smoother is for symmetric saddle point systems,
+        with block system structure
+        matrices
+        A = [[W, J^T],
+             [J,  0 ]]
+        """
+        me.J  = J
+        me.JT = JT
+        me.W  = W
+
+        if me.lumped:
+            Wblock = sps.bmat([[W[:me.n1,:me.n1], None],\
+                               [None, W[me.n1:,me.n1:]]], format='csr')
+            one = np.ones(me.idx0)
+            me.DWinv = sps.diags( 1. / (Wblock.dot(one)))
+        else:
+            me.DWinv = sps.diags(1. / me.W.diagonal())
+        
+
+    def dot(me, b):
+        f = b[ :me.idx0]
+        g = b[me.idx0: ]
+
+        z = np.zeros(me.n)
+        # rhs to determine y
+        rhs = me.J.dot(me.DWinv.dot(f)) - g
+        sysmat = me.J.dot(me.DWinv.dot(me.JT))
+        y = spla.spsolve(sysmat, rhs)
+        z[me.idx0:] = y[:]
+
+        # determine x
+        x = me.DWinv.dot(f - me.JT.dot(y))
+        z[:me.idx0] = x[:]
+        z[:] = z[:]
+        return z
+
+
+"""
+This describes the action of a smoother
+S, wherein
+
+S^-1 = [[Wuu  0   JuT]
+        [0   Wmm   0 ]
+        [Ju   0    0 ]]
+
+this smoother is for a saddle point system
+
+A =    [[W  JT]
+        [J   0]]
+
+where
+
+W =    [[Wuu Wum]
+        [Wmu Wmm]]
+
+J      = [Ju Jm] 
+"""
+
+class ApproximateConstrainedSmoother:
+    def __init__(me, W, JT, J, n1):
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.idx0 = W.shape[0]
+        me.n    = W.shape[0] + J.shape[0]
+
+        me.Wuu = W[:n1,:n1]
+        me.Wmm = W[n1:,n1:]
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+
+    def dot(me, R):
+        R1 = R[:me.n1]
+        R2 = R[me.n1:me.idx0]
+        R3 = R[me.idx0:]
+
+        # S R = z
+        z  = np.zeros(me.n)
+        
+        du = spla.spsolve(me.Ju, R3)
+        dm = spla.spsolve(me.Wmm, R2)
+        dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
+
+        z[:me.n1]        = du[:]
+        z[me.n1:me.idx0] = dm[:]
+        z[me.idx0:]      = dy[:]
+
+        return z
+
+
+
+"""
+ConstrainedPreSmoother
+This describes the action of a smoother
+S, wherein
+
+S^-1 = [[Wuu     0      JuT]
+        [Wmu diag(Wmm)  JmT]
+        [Ju      0       0 ]]
+
+this smoother is for a saddle point system
+
+A =    [[W  JT]
+        [J   0]]
+
+where
+
+W =    [[Wuu Wum]
+        [Wmu Wmm]]
+
+J      = [Ju Jm] 
+"""
+
+
+class ConstrainedPreSmoother:
+    def __init__(me, W, JT, J, n1):
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.idx0 = W.shape[0]
+        me.n    = W.shape[0] + J.shape[0]
+
+        me.Wuu = W[:n1, :n1]
+        me.Wmm = sps.diags(W[n1:, n1:].diagonal(), format="csr")
+        me.Wmu = W[n1:, :n1]
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+    def dot(me, R):
+        R1 = R[:me.n1]
+        R2 = R[me.n1:me.idx0]
+        R3 = R[me.idx0:]
+
+        # S R = z
+        z  = np.zeros(me.n)
+        
+        du = spla.spsolve(me.Ju, R3)
+        dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
+        dm = spla.spsolve(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy))
+
+        z[:me.n1]        = du[:]
+        z[me.n1:me.idx0] = dm[:]
+        z[me.idx0:]      = dy[:]
+
+        return z
+
+
+"""
+ConstrainedPostSmoother
+This describes the action of a smoother
+S, wherein
+
+S^-1 = [[Wuu    Wum     JuT]
+        [0   diag(Wmm)   0 ]
+        [Ju     Jm       0 ]]
+
+this smoother is for a saddle point system
+
+A =    [[W  JT]
+        [J   0]]
+
+where
+
+W =    [[Wuu Wum]
+        [Wmu Wmm]]
+
+J      = [Ju Jm] 
+"""
+
+
+class ConstrainedPostSmoother:
+    def __init__(me, W, JT, J, n1):
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.idx0 = W.shape[0]
+        me.n    = W.shape[0] + J.shape[0]
+
+        me.Wuu = W[:n1, :n1]
+        me.Wmm = sps.diags(W[n1:, n1:].diagonal(), format="csr")
+        me.Wum = W[:n1, n1:]
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+
+    def dot(me, R):
+        R1 = R[:me.n1]
+        R2 = R[me.n1:me.idx0]
+        R3 = R[me.idx0:]
+
+        # S R = z
+        z  = np.zeros(me.n)
+        
+        dm = spla.spsolve(me.Wmm, R2)
+        du = spla.spsolve(me.Ju,  R3 - me.Jm.dot(dm))
+        dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du) - me.Wum.dot(dm))
+
+        z[:me.n1]        = du[:]
+        z[me.n1:me.idx0] = dm[:]
+        z[me.idx0:]      = dy[:]
+        return z
 
 
 
@@ -250,7 +466,7 @@ class two_grid_action(spla.LinearOperator):
     P       -- projection operator  (coarse to fine grid)
     m       -- number of pre and post smoothing steps
     """
-    def __init__(me, Lfine, Lcoarse, S, P, R, m, M = None, coarsegridcorrection = True):
+    def __init__(me, Lfine, Lcoarse, S, P, R, m, M = None, coarsegridcorrection = True, Spost=None):
         me.Lcoarse = Lcoarse #coarse grid operator
         me.Lfine   = Lfine   #fine grid operator
         me.S       = S       #smoother
@@ -261,6 +477,7 @@ class two_grid_action(spla.LinearOperator):
         me.M       = M       # smoother for coarse grid linear solve
         me.dtype   = Lcoarse.dtype
         me.coarsegridcorrection = coarsegridcorrection
+        me.Spost = Spost 
     def _matvec(me, b):
         x  = np.zeros(me.shape[0])
         r  = b.copy()
@@ -298,7 +515,10 @@ class two_grid_action(spla.LinearOperator):
         """
         r = b - me.Lfine.dot(x)
         for i in range(me.m):
-            e = me.S.dot(r)
+            if me.Spost is None:
+                e = me.S.dot(r)
+            else:
+                e = me.Spost.dot(r)
             x = x + e
             r = b - me.Lfine.dot(x)
         return x  
