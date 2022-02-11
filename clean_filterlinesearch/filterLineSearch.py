@@ -1,9 +1,37 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.sparse as sps
+import scipy.sparse.linalg as spla
+from helperfunctions import *
+import sys, inspect
+import problems as problemDefs
+
 
 class interior_pt:
-    def __init__(self, problem):
-        self.problem = problem
+    def __init__(self, problems, linsolve_strategy):
+        self.problems = problems
+
+        problemDefMembers = inspect.getmembers(problemDefs, inspect.isclass)
+        problemDefTypes   = [problemDefMembers[i][1] for i in range(len(problemDefMembers))]
+        
+        if type(self.problems) in problemDefTypes:
+            # a single problem has been supplied
+            self.problem = self.problems
+            problem = self.problem
+        elif type(self.problems) is list:
+            self.problem  = self.problems[-1]
+            problem = self.problem
+            if type(problem) not in problemDefTypes:
+                raise TypeError("problems argument must be a problem class or list of problem classes from problems.py")
+
+        self.sparse_struct   = self.problem.sparse_struct
+        self.linsolve_strategy = linsolve_strategy
+
+        if linsolve_strategy == "multigrid":
+            if type(self.problems) is not list:
+                raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
+            self.multigridHierarchy = multigridHierarchy(self.problems)
+            self.residuals          = []
 
         # -------- lower-bound constraint
         self.rhol = problem.rhol
@@ -105,29 +133,55 @@ class interior_pt:
         x, lam, z = self.split(X)
         u   = x[:self.n1]
         rho = x[self.n1:]
-        """
-        linear-sys perturbation obtained by eliminating the bound-constrained multiplier
-        """
-        dHrhorho = np.diag(z / (rho - self.rhol))
 
-        """
-        perutrbed-Hessian / objective + log-barrier Hessian
-        """
-        Hk[self.n1:self.n, self.n1:self.n] += dHrhorho[:, :]
+        Jk  = self.problem.Dxc(x)
+        JkT = Jk.transpose()
+       
+        if self.sparse_struct:
+            dHrhorho = sps.diags(z / (rho - self.rhol))
+            Ak = sps.bmat([[Hk[:self.n1, :self.n1], Hk[:self.n1, self.n1:], JkT[:self.n1,:]],\
+                           [Hk[self.n1:, :self.n1], Hk[self.n1:, self.n1:] + dHrhorho, JkT[self.n1:, :]],\
+                           [Jk[:, :self.n1], Jk[:, self.n1:], None]], format="csr")
+        else:
+            Ak = np.zeros((self.idx2, self.idx2))
 
-        Jk = self.problem.Dxc(x)
+            dHrhorho = np.diag(z / (rho - self.rhol))
 
-        Ak = np.zeros((self.idx2, self.idx2))
-
-        Ak[        0:self.idx1,         0:self.idx1] = Hk[:, :]     # 1,1 block 
-        Ak[self.idx1:self.idx2,         0:self.idx1] = Jk[:, :]     # 2,1 block
-        Ak[        0:self.idx1, self.idx1:self.idx2] = (Jk.T)[:, :] # 1,2 block
+            Ak[        0:self.idx1,         0:self.idx1] = Hk[:, :]     # 1,1 block
+            Ak[   self.n1:self.idx1,   self.n1:self.idx1]+= dHrhorho
+            Ak[self.idx1:self.idx2,         0:self.idx1] = Jk[:, :]     # 2,1 block
+            Ak[        0:self.idx1, self.idx1:self.idx2] = (Jk.T)[:, :] # 1,2 block
 
         """
         By eliminating the bound-constraint multiplier, the rhs of the IP-Newton system is altered by dr
         """
         drk    = -mu / (rho - self.rhol)
         return Ak, Jk, drk
+
+    def linsolve(self, A, b):
+        if self.sparse_struct:
+            W  = A[:self.n, :self.n]
+            JT = A[:self.n, self.n:]
+            J  = A[self.n:, :self.n]
+            if self.linsolve_strategy == "multigrid":
+                self.multigridHierarchy.constructPreconditioner(W, JT, J, self.problem.n1)
+                M = two_grid_action(self.multigridHierarchy.Lfine, self.multigridHierarchy.Lcoarse,\
+                                       self.multigridHierarchy.Spre, self.multigridHierarchy.P,\
+                                       self.multigridHierarchy.R, 2, Spost=self.multigridHierarchy.Spost)
+            elif self.linsolve_strategy == "presmoothing":
+                M = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
+            if self.linsolve_strategy == "direct":
+                sol = spla.spsolve(A, b)
+            else:
+                lintol= 1.e-8
+                maxiter = 100
+                krylov_convergence = Krylov_convergence(A, b)
+                sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
+                                       M = M, maxiter=maxiter, callback=krylov_convergence.callback)
+                self.residuals.append(krylov_convergence.residuals)
+        else:
+            sol = np.linalg.solve(A, b)
+        return sol 
     """ 
     determine the solution
     of the perturbed KKT conditions
@@ -142,9 +196,10 @@ class interior_pt:
         zhat      = np.zeros(self.n2)
 
         Ak, Jk, drk = self.formH(X, mu)
-        JkT = Jk.T
+        JkT = Jk.transpose()
         rk = np.zeros(self.n+self.m)
         rk[:self.n] = self.problem.Dxf(x) + JkT.dot(lam)
+
         if not soc:
             rk[self.n:] = self.problem.c(x)[:]
         else:
@@ -154,41 +209,30 @@ class interior_pt:
 
         # use same regularization for soc as for the step computation
         if soc:
-            Ak[:self.n,:self.n] += self.deltalast * np.identity(self.n)
-        sol = np.linalg.solve(Ak, -1.*rk)
-        print("KKT sys error = {0:1.3e}".format(np.linalg.norm(Ak.dot(sol) + rk)/np.linalg.norm(rk)))
-
+            if self.sparse_struct:
+                Ak[:self.n,:self.n] += self.deltalast * sps.identity(self.n)
+            else:
+                Ak[:self.n,:self.n] += self.deltalast * np.identity(self.n)
+        
+        sol = self.linsolve(Ak, -rk)
+                
         """
         Here is where the inertia-correcting scheme will begin
         """
-        xhat[:]   = sol[:self.n].copy()
-        lamhat[:] = sol[self.n:].copy()
-        lamplus   = (lamhat + lam).copy()
+        xhat[:]   = sol[:self.n]
+        lamhat[:] = sol[self.n:]
+        lamplus   = (lamhat + lam)
         rhohat    = xhat[self.n1:].copy()
         rho       = x[self.n1:].copy()
 
         if soc:
             zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))
-            return xhat.copy(), lamhat.copy(), zhat.copy()
+            return xhat, lamhat, zhat
 
 
-        Akdelta = np.zeros((self.idx2, self.idx2))
-        # Blocks that are not impacted by inertia-correction
-        Akdelta[self.idx1:, :self.idx1] = Ak[self.idx1:, :self.idx1]
-        Akdelta[:self.idx1, self.idx1:] = Ak[:self.idx1, self.idx1:]
+        Wk      = Ak[:self.idx1, :self.idx1]
 
-        Wk = np.zeros((self.idx1, self.idx1))
-        Wk[:,:] = Ak[:self.idx1, :self.idx1]
-        eigs    = np.linalg.eigvalsh(Ak)
-        num_pos  = sum(eigs > 0.)
-        num_neg  = sum(eigs < 0.)
-        num_zero = sum(eigs == 0.)
-        print("inertia of IP-Newton system matrix = ({0:d}, {1:d}, {2:d})".format(num_pos, num_neg, num_zero))
-        print("inertia (to guarantee descent near feasible points) = ({0:d}, {1:d}, {2:d})".format(self.n, self.m, 0))
-        print("smallest eigenvalue by magnitude = {0:1.2e}".format(min(np.abs(eigs))))
-        print("cond(Wk(delta=0)) = {0:1.2e}".format(np.linalg.cond(Wk)))
-
-        if np.inner(xhat, np.dot(Wk, xhat)) + max(0, -1.*np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
+        if np.inner(xhat, Wk.dot(xhat)) + max(0, -1.*np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
             zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
             self.deltalast = 0.
             print("NO INERTIA CORRECTION WAS REQUIRED")
@@ -201,22 +245,23 @@ class interior_pt:
                 delta = max(self.deltamin, self.kappaminus*self.deltalast)
             j_ic = 0
             while j_ic < self.max_ic:
-                Akdelta[:self.idx1, :self.idx1] = Ak[:self.idx1, :self.idx1] + delta * np.identity(self.idx1)
-                Wk[:, :]  = Akdelta[:self.idx1, :self.idx1]
-                sol       = np.linalg.solve(Akdelta, -rk)
+                if self.sparse_struct:
+                    Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * sps.identity(self.idx1), Ak[self.idx1:, :self.idx1]],\
+                                    [Ak[:self.idx1, self.idx1:], None]], format="csr")
+                else:
+                    Akdelta = np.zeros((self.idx2, self.idx2))
+                    Akdelta[:,:] = Ak[:,:]
+                    Akdelta[:self.idx1, :self.idx1] += delta * np.identity(self.idx1)
+                Wk        = Akdelta[:self.idx1, :self.idx1]
+                sol       = self.linsolve(Akdelta, -rk)
                 xhat[:]   = sol[:self.idx1]
                 lamhat[:] = sol[self.idx1:]
                 lamplus   = (lamhat + lam)
-                if np.inner(xhat, np.dot(Wk, xhat)) + max(0, -np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
+                if np.inner(xhat, Wk.dot(xhat)) + max(0, -np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
                     zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
                     self.deltalast = delta
                     print("inertia correction = {0:1.3e}".format(delta))
-                    eigs = np.linalg.eigvalsh(Akdelta)
-                    num_pos = sum(eigs > 0.)
-                    num_neg = sum(eigs < 0.)
-                    num_zero = len(eigs) - num_pos - num_neg
-                    print("inertia of the regularized Newon system matrix = ({0:d}, {1:d}, {2:d})".format(num_pos, num_neg, num_zero))
-                    return xhat.copy(), lamhat.copy(), zhat.copy()
+                    return xhat, lamhat, zhat
                 elif self.deltalast == 0.:
                     delta = self.kappahatplus * delta
                 else:
@@ -492,6 +537,8 @@ class interior_pt:
         return X, mu, Es, Mus
 
     def restore_feasibility(self, X, tau):
+        print("haven't implemented feasibility restoration! :( .... exiting :(")
+        exit()
         x, lam, z = self.split(X) 
         J         = self.problem.Dxc(x)
         

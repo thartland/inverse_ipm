@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from filterLineSearchSuper import interior_pt 
+from filterLineSearch import interior_pt 
 
 from problems import hs071
 from helperfunctions import grad_check
