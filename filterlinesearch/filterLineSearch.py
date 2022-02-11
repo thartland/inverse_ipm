@@ -31,7 +31,8 @@ class interior_pt:
             if type(self.problems) is not list:
                 raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
             self.multigridHierarchy = multigridHierarchy(self.problems)
-            self.residuals          = []
+        if linsolve_strategy in ["multigrid", "presmoothing"]:
+            self.residuals = []
 
         # -------- lower-bound constraint
         self.rhol = problem.rhol
@@ -167,7 +168,7 @@ class interior_pt:
                 self.multigridHierarchy.constructPreconditioner(W, JT, J, self.problem.n1)
                 M = two_grid_action(self.multigridHierarchy.Lfine, self.multigridHierarchy.Lcoarse,\
                                        self.multigridHierarchy.Spre, self.multigridHierarchy.P,\
-                                       self.multigridHierarchy.R, 2, Spost=self.multigridHierarchy.Spost)
+                                       self.multigridHierarchy.R, 1, Spost=self.multigridHierarchy.Spost)
             elif self.linsolve_strategy == "presmoothing":
                 M = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
             if self.linsolve_strategy == "direct":

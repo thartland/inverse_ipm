@@ -40,18 +40,18 @@ class inverseDiffusion:
         me.beta   = beta
         me.gamma1 = gamma1
         me.gamma2 = gamma2
-        utest,  mtest = dl.TestFunctions(me.Vh)
-        utrial, mtrial = dl.TrialFunctions(me.Vh)
-        Rform = (dl.Constant(gamma1) * mtest * mtrial +\
-                 dl.Constant(gamma2) * dl.inner(dl.grad(mtest), dl.grad(mtrial))) * dl.dx(me.Vh.mesh())
-        Mform = (utest * utrial + mtest * mtrial) * dl.dx(me.Vh.mesh())
+        #utest,  mtest = dl.TestFunctions(me.Vh)
+        #utrial, mtrial = dl.TrialFunctions(me.Vh)
+        #Rform = (dl.Constant(gamma1) * mtest * mtrial +\
+        #         dl.Constant(gamma2) * dl.inner(dl.grad(mtest), dl.grad(mtrial))) * dl.dx(me.Vh.mesh())
+        #Mform = (utest * utrial + mtest * mtrial) * dl.dx(me.Vh.mesh())
 
-        me.R_fenics  = dl.assemble(Rform)
-        me.R         = me.R_fenics.array()[me.n1:, me.n1:]
-        me.M_fenics  = dl.assemble(Mform)
-        me.Mx        = me.M_fenics.array()
-        me.Mu        = me.Mx[:me.n1,:me.n1]
-        me.Mm        = me.Mx[me.n1:,me.n1:]
+        #me.R_fenics  = dl.assemble(Rform)
+        #me.R         = me.R_fenics.array()[me.n1:, me.n1:]
+        #me.M_fenics  = dl.assemble(Mform)
+        #me.Mx        = me.M_fenics.array()
+        #me.Mu        = me.Mx[:me.n1,:me.n1]
+        #me.Mm        = me.Mx[me.n1:,me.n1:]
 
     """
     In what follows x will be a function on the state-parameter product

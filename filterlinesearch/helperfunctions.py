@@ -14,6 +14,12 @@ def csr_fenics2scipy(A_fenics):
     return A_scipy
 
 
+def make_pairs(data, filename):
+    n     = len(data)
+    pairs = [(j+1, data[j]) for j in range(n)]
+    np.savetxt(filename+".dat", pairs)
+
+
 def power_iteration(op, n, maxiter=400, tol=1.e-8):
     x0 = np.random.randn(n)
     lam0 = 0.
