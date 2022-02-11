@@ -2,7 +2,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
-import dolfin as dl
+
+try:
+    import dolfin as dl
+except:
+    Warning("FEniCS not found in current Python environment.")
 
 def csr_fenics2scipy(A_fenics):
     ai, aj, av = dl.as_backend_type(A_fenics).mat().getValuesCSR()
@@ -50,16 +54,21 @@ class Krylov_convergence:
     This class allows for tracking the residual history of 
     a Krylov solve.
     """
-    def __init__(me, A, b):
+    def __init__(me, A, b, residual_callback=True):
         me.counter = [0,]
         me.residuals = list()
         me.A = A
         me.b = b
-    def callback(me, rk):
+        me.residual_callback = residual_callback
+    def callback(me, xk):
         k = me.counter[0]
         me.counter[0] = k+1
-        #res = np.linalg.norm(me.A.dot(xk) - me.b) / np.linalg.norm(me.b)
-        res = np.linalg.norm(rk) / np.linalg.norm(me.b)
+        if me.residual_callback:
+            # xk is residual
+            res = np.linalg.norm(xk) / np.linalg.norm(me.b)
+        else:
+            # xk is not residual
+            res = np.linalg.norm(me.A.dot(xk) - me.b) / np.linalg.norm(me.b)
         me.residuals.append(res)
     def reset(me):
         me.counter = [0,]
@@ -127,8 +136,8 @@ class multigridHierarchy:
                              [Jk, None]], format="csr")
 
 
-        me.Spre  = ConstrainedPreSmoother(Wk, JkT, Jk, n1)
-        me.Spost = ConstrainedPostSmoother(Wk, JkT, Jk, n1)
+        me.Spre  = ConstrainedPreSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R = me.R_state)
+        me.Spost = ConstrainedPostSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R=me.R_state)
 
         me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
         
@@ -339,8 +348,8 @@ J      = [Ju Jm]
 """
 
 
-class ConstrainedPreSmoother:
-    def __init__(me, W, JT, J, n1):
+class ConstrainedPreSmoother(spla.LinearOperator):
+    def __init__(me, W, JT, J, n1, Mgrid=False, P=None, R=None):
         me.W  = W
         me.JT = JT
         me.J  = J
@@ -348,6 +357,8 @@ class ConstrainedPreSmoother:
         me.n1 = n1
         me.idx0 = W.shape[0]
         me.n    = W.shape[0] + J.shape[0]
+        me.shape = (me.n, me.n)
+        me.dtype = W.dtype 
 
         me.Wuu = W[:n1, :n1]
         me.Wmm = sps.diags(W[n1:, n1:].diagonal(), format="csr")
@@ -356,6 +367,24 @@ class ConstrainedPreSmoother:
         me.Jm  = J[:,n1:]
         me.JuT = me.Ju.transpose()
         me.JmT = me.Jm.transpose()
+        
+        me.Mgrid = Mgrid
+        me.P     = P
+        me.R     = R
+
+        if me.Mgrid and (P is None or R is None):
+            print("ERROR!!!, Must supply Projection/Restriction when using Mgrid solves in smoother!")
+        
+        if me.Mgrid:
+            w = 2. / 3. # relaxation factor
+            m = 10      # Jacobi pre/post smoothing steps for Ju solves
+            Jucoarse  = me.R.dot(me.Ju.dot(me.P))
+            SJu       = sps.diags(w / me.Ju.diagonal(), format="csr")
+            JuTcoarse = me.R.dot(me.JuT.dot(P))
+            SJuT      = sps.diags(w / me.JuT.diagonal(), format="csr")
+            me.Ju_twogrid_P = two_grid_action(me.Ju, Jucoarse, SJu, P, R, m)
+            me.JuT_twogrid_P = two_grid_action(me.JuT, JuTcoarse, SJuT, P, R, m)
+
     def dot(me, R):
         R1 = R[:me.n1]
         R2 = R[me.n1:me.idx0]
@@ -364,8 +393,19 @@ class ConstrainedPreSmoother:
         # S R = z
         z  = np.zeros(me.n)
         
-        du = spla.spsolve(me.Ju, R3)
-        dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
+        if me.Mgrid:
+            krylov_convergence = Krylov_convergence(me.Ju, R3, residual_callback=False)
+            du, info = spla.cg(me.Ju, R3, tol=1.e-12, maxiter=100, M = me.Ju_twogrid_P, callback=krylov_convergence.callback)
+            if info > 0:
+                print("CG solve failure!!!")
+            else:
+                print("CG converged in {0:d} iterations".format(len(krylov_convergence.residuals)))
+            dy, info = spla.cg(me.JuT, R1 - me.Wuu.dot(du), tol=1.e-12, maxiter=100, M=me.JuT_twogrid_P)
+            if info > 0:
+                print("CG solve failure!!!")
+        else:
+            du = spla.spsolve(me.Ju, R3)
+            dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
         dm = spla.spsolve(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy))
 
         z[:me.n1]        = du[:]
@@ -373,6 +413,8 @@ class ConstrainedPreSmoother:
         z[me.idx0:]      = dy[:]
 
         return z
+    def _matvec(me, b):
+        return me.dot(b)
 
 
 """
@@ -399,7 +441,7 @@ J      = [Ju Jm]
 
 
 class ConstrainedPostSmoother:
-    def __init__(me, W, JT, J, n1):
+    def __init__(me, W, JT, J, n1, Mgrid=False, P=None, R=None):
         me.W  = W
         me.JT = JT
         me.J  = J
@@ -415,6 +457,23 @@ class ConstrainedPostSmoother:
         me.Jm  = J[:,n1:]
         me.JuT = me.Ju.transpose()
         me.JmT = me.Jm.transpose()
+        
+        me.Mgrid = Mgrid
+        me.P     = P
+        me.R     = R
+
+        if me.Mgrid and (P is None or R is None):
+            print("ERROR!!!, Must supply Projection/Restriction when using Mgrid solves in smoother!")
+        
+        if me.Mgrid:
+            w = 2. / 3. # relaxation factor
+            m = 10      # Jacobi pre/post smoothing steps for Ju solves
+            Jucoarse  = me.R.dot(me.Ju.dot(me.P))
+            SJu       = sps.diags(w / me.Ju.diagonal(), format="csr")
+            JuTcoarse = me.R.dot(me.JuT.dot(P))
+            SJuT      = sps.diags(w / me.JuT.diagonal(), format="csr")
+            me.Ju_twogrid_P = two_grid_action(me.Ju, Jucoarse, SJu, P, R, m)
+            me.JuT_twogrid_P = two_grid_action(me.JuT, JuTcoarse, SJuT, P, R, m)
 
     def dot(me, R):
         R1 = R[:me.n1]
@@ -425,32 +484,23 @@ class ConstrainedPostSmoother:
         z  = np.zeros(me.n)
         
         dm = spla.spsolve(me.Wmm, R2)
-        du = spla.spsolve(me.Ju,  R3 - me.Jm.dot(dm))
-        dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du) - me.Wum.dot(dm))
+        
+        if me.Mgrid:
+            du, info = spla.cg(me.Ju, R3 - me.Jm.dot(dm), tol=1.e-12, maxiter=100, M = me.Ju_twogrid_P)
+            if info > 0:
+                print("CG solve failure!!!")
+            dy, info = spla.cg(me.JuT, R1 - me.Wuu.dot(du) - me.Wum.dot(dm), tol=1.e-12, maxiter=100, M=me.JuT_twogrid_P)
+            if info > 0:
+                print("CG solve failure!!!")
+        else:
+            du = spla.spsolve(me.Ju,  R3 - me.Jm.dot(dm))
+            dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du) - me.Wum.dot(dm))
 
         z[:me.n1]        = du[:]
         z[me.n1:me.idx0] = dm[:]
         z[me.idx0:]      = dy[:]
         return z
 
-
-
-
-class ILUsmoother:
-    def __init__(me, A):
-        me.ILUsolver = spla.spilu(A.tocsc(), drop_tol=1.e-4, fill_factor=6.0)
-        me.n         = A.shape[0]
-    def dot(me, x):
-        return me.ILUsolver.solve(x)
-
-
-class ILUaction(spla.LinearOperator):
-    def __init__(me, A):
-        me.shape = A.shape
-        me.dtype = A.dtype
-        me.ILUsolver = spla.spilu(A.tocsc(), drop_tol=1.e-4, fill_factor=6.0)
-    def _matvec(me, b):
-        return me.ILUsolver.solve(b)
 
 class two_grid_action(spla.LinearOperator):
     """
