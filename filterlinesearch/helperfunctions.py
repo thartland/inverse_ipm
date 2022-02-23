@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 
+
 try:
     import dolfin as dl
 except:
@@ -332,6 +333,39 @@ class ApproximateConstrainedSmoother:
 
 
 """
+Cumulative Smoother, combine smoother actions to yield
+
+S_3 = S_1 + S_2 - S_2 A S_1 (strategy 1)
+S_3 = S_2 A S_1            
+"""
+class CumulativeSmoother(spla.LinearOperator):
+    def __init__(me, S1, S2, A, strategy=1):
+        me.dtype = A.dtype
+        me.shape = A.shape
+        me.S1 = S1
+        me.S2 = S2
+        me.A  = A
+        me.strategy = strategy
+    def dot(me, x):
+        y = me.S1.dot(x)
+        z = me.A.dot(y)
+        if me.strategy == 1:
+            w = me.S2.dot(x- z)
+            return y + w
+        else:
+            w = me.S2.dot(z)
+            return w
+    def _matvec(me, b):
+        return me.dot(b)
+
+
+
+
+
+
+
+
+"""
 ConstrainedPreSmoother
 This describes the action of a smoother
 S, wherein
@@ -508,6 +542,52 @@ class ConstrainedPostSmoother:
         return z
 
 
+
+class reducedHessian(spla.LinearOperator):
+    def __init__(me, W, JT, J, n1):
+        me.n1  = n1
+        me.W   = W 
+        me.n   = W.shape[0]-n1
+        me.shape = (me.n, me.n)
+        me.Wuu   = W[:me.n1, :me.n1]
+        me.Wum   = W[:me.n1, me.n1:]
+        me.Wmu   = W[me.n1:, :me.n1]
+        me.Wmm   = W[me.n1:, me.n1:]
+        me.Ju    = J[:, :me.n1]
+        me.Jm    = J[:, me.n1:]
+        me.JuT   = JT[:me.n1, :]
+        me.JmT   = JT[me.n1:, :]
+        me.r1    = None
+        me.r2    = None
+        me.r3    = None
+    def preprhs(me, r):
+        me.r1 = r[:me.n1]
+        me.r2 = r[me.n1:me.W.shape[0]]
+        me.r3 = r[me.W.shape[0]:]
+        Juinvr3 = spla.spsolve(me.Ju, me.r3)
+        return me.r2 - me.Wmu.dot(Juinvr3) - me.JmT.dot(spla.spsolve(me.JuT, me.r1 - me.Wuu.dot(Juinvr3)))
+
+    def dot(me, mhat):
+        uhat   = -spla.spsolve(me.Ju, me.Jm.dot(mhat))
+        lamhat = -spla.spsolve(me.JuT, me.Wuu.dot(uhat) + me.Wum.dot(mhat))
+        return me.Wmu.dot(uhat) + me.Wmm.dot(mhat) + me.JmT.dot(lamhat)
+
+    def _matvec(me, x):
+        return me.dot(x)
+    def backsolve(me, mhat):
+        uhat   = spla.spsolve(me.Ju, me.r3 - me.Jm.dot(mhat))
+        lamhat = spla.spsolve(me.JuT, me.r1 - me.Wuu.dot(uhat) - me.Wum.dot(mhat))
+        return np.concatenate([uhat, mhat, lamhat])
+
+class regularizationSmoother(spla.LinearOperator):
+    def __init__(me, Wmm):
+        me.shape = Wmm.shape
+        me.Wmm   = Wmm
+    def _matvec(me, x):
+        return spla.spsolve(me.Wmm, x)
+
+
+
 class two_grid_action(spla.LinearOperator):
     """
     Inherit from spla.LinearOperator class so that
@@ -577,4 +657,4 @@ class two_grid_action(spla.LinearOperator):
                 e = me.Spost.dot(r)
             x = x + e
             r = b - me.Lfine.dot(x)
-        return x  
+        return x

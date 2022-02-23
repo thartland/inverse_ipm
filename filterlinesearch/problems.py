@@ -17,7 +17,7 @@ and set up the linear KKT system.
 """
 
 class inverseDiffusion:
-    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, ud, g, rhol):
+    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, ud, g, rhol, B=None, noise_lvl=1.0):
         me.sparse_struct = True
         me.Vh    = Vh
         me.Vh1   = Vh1
@@ -40,15 +40,26 @@ class inverseDiffusion:
         me.beta   = beta
         me.gamma1 = gamma1
         me.gamma2 = gamma2
-        #utest,  mtest = dl.TestFunctions(me.Vh)
-        #utrial, mtrial = dl.TrialFunctions(me.Vh)
-        #Rform = (dl.Constant(gamma1) * mtest * mtrial +\
-        #         dl.Constant(gamma2) * dl.inner(dl.grad(mtest), dl.grad(mtrial))) * dl.dx(me.Vh.mesh())
-        #Mform = (utest * utrial + mtest * mtrial) * dl.dx(me.Vh.mesh())
+        utest,  mtest = dl.TestFunctions(me.Vh)
+        utrial, mtrial = dl.TrialFunctions(me.Vh)
+        Rform = (dl.Constant(gamma1) * mtest * mtrial +\
+                 dl.Constant(gamma2) * dl.inner(dl.grad(mtest), dl.grad(mtrial))) * dl.dx(me.Vh.mesh())
+        Mform = (utest * utrial + mtest * mtrial) * dl.dx(me.Vh.mesh())
 
-        #me.R_fenics  = dl.assemble(Rform)
+        me.R_fenics  = dl.assemble(Rform)
+        me.R         = csr_fenics2scipy(me.R_fenics)[me.n1:, me.n1:]
+
+
         #me.R         = me.R_fenics.array()[me.n1:, me.n1:]
-        #me.M_fenics  = dl.assemble(Mform)
+        me.M_fenics  = dl.assemble(Mform)
+        me.Mx        = csr_fenics2scipy(me.M_fenics)
+        me.Mu        = me.Mx[:me.n1, :me.n1]
+        if B is None:
+            me.B = me.Mu
+        else:
+            me.B = B
+        me.BT = me.B.transpose()
+        me.sig = noise_lvl
         #me.Mx        = me.M_fenics.array()
         #me.Mu        = me.Mx[:me.n1,:me.n1]
         #me.Mm        = me.Mx[me.n1:,me.n1:]
@@ -62,37 +73,32 @@ class inverseDiffusion:
     objective -- return the value of the regularized data-misfit functional at x
     """
     def f(me, x):
-        X = dl.Function(me.Vh)
-        X.vector().set_local(x)
-        return dl.assemble((dl.Constant(0.5) * (X.sub(0) - me.ud)**2. + \
-                           dl.Constant(me.gamma1/2.)*X.sub(1)*X.sub(1) + \
-                           dl.Constant(me.gamma2/2.)*dl.inner(\
-                           dl.grad(X.sub(1)), dl.grad(X.sub(1))))*dl.dx(me.Vh.mesh()))
+        #X = dl.Function(me.Vh)
+        #X.vector().set_local(x)
+        d = me.ud.vector()[:]
+        u   = x[:me.n1]
+        rho = x[me.n1:]
+        return 0.5 * np.inner(me.B.dot(u - d), me.B.dot(u- d)) / (me.sig**2.) + 0.5 * np.inner(rho, me.R.dot(rho))
+
+        #return dl.assemble((dl.Constant(0.5) * (X.sub(0) - me.ud)**2. + \
+        #                   dl.Constant(me.gamma1/2.)*X.sub(1)*X.sub(1) + \
+        #                   dl.Constant(me.gamma2/2.)*dl.inner(\
+        #                   dl.grad(X.sub(1)), dl.grad(X.sub(1))))*dl.dx(me.Vh.mesh()))
     """
     gradient -- return the variational derivative of J with respect to x
     """
     def Dxf(me, x):
-        X = dl.Function(me.Vh)
-        X.vector().set_local(x)
-        utest, rhotest = dl.TestFunctions(me.Vh)
-        return dl.assemble(((X.sub(0) - me.ud) * utest + \
-                            dl.Constant(me.gamma1) * X.sub(1) * rhotest + \
-                            dl.Constant(me.gamma2) * \
-                            dl.inner(dl.grad(X.sub(1)), dl.grad(rhotest)))*dl.dx(me.Vh.mesh())).get_local()
-    def Dxxfform(me, x):
-        utest, mtest = dl.TestFunctions(me.Vh)
-        utrial, mtrial = dl.TrialFunctions(me.Vh)
-        return (utrial*utest + \
-                                dl.Constant(me.gamma1)*\
-                                mtrial*mtest + \
-                                dl.Constant(me.gamma2)*\
-                                dl.inner(dl.grad(mtest), dl.grad(mtrial)))*dl.dx(me.Vh.mesh())
+        u   = x[:me.n1]
+        rho = x[me.n1:]
+        d   = me.ud.vector()[:]
+        return np.concatenate([me.BT.dot(me.B.dot(u-d)) / me.sig**2., me.R.dot(rho)])
     """
     return the second variational derivative of J with respect to x, that is
     a linear mapping from primal to dual
     """
     def Dxxf(me, x):
-        return csr_fenics2scipy(dl.assemble(me.Dxxfform(x)))
+        y = sps.bmat([[me.BT.dot(me.B)/me.sig**2., None], [None, me.R]], format="csr")
+        return y
     """
     constraints -- evaluate the PDE-constraint at x, returning a dual-vector
     """
@@ -155,7 +161,8 @@ class inverseDiffusion:
         #y = np.zeros((me.n, me.n))
         #y[:, :] += me.Dxxf(x)
         #y[:, :] += me.Dxxcp(x, lam).array()[:,:]
-        y = csr_fenics2scipy(dl.assemble(me.Dxxfform(x) + me.Dxxcpform(x, lam)))
+        #y = csr_fenics2scipy(dl.assemble(me.Dxxfform(x) + me.Dxxcpform(x, lam)))
+        y = me.Dxxf(x) + csr_fenics2scipy(dl.assemble(me.Dxxcpform(x, lam)))    
         return y
     def E(me, X, mu, smax):
         x, lam, z = X[:]
@@ -192,7 +199,7 @@ and set up the linear KKT system.
 """    
 
 class inverseRHS:
-    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, ud, rhol):
+    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, ud, rhol, B=None):
         me.sparse_struct = True
         
         me.Vh    = Vh
@@ -221,11 +228,17 @@ class inverseRHS:
         Mform = (utest * utrial + mtest * mtrial) * dl.dx(me.Vh.mesh())
        
         me.R_fenics  = dl.assemble(Rform)
-        me.R         = me.R_fenics.array()[me.n1:, me.n1:]
+        me.R         = csr_fenics2scipy(me.R_fenics)[me.n1:, me.n1:]
+        #me.R         = me.R_fenics.array()[me.n1:, me.n1:]
         me.M_fenics  = dl.assemble(Mform)
-        me.Mx        = me.M_fenics.array()
+        me.Mx        = csr_fenics2scipy(me.M_fenics)
+        #me.Mx        = me.M_fenics.array()
         me.Mu        = me.Mx[:me.n1,:me.n1]
         me.Mm        = me.Mx[me.n1:,me.n1:]
+        
+        me.B = B
+        if me.B is not None:
+            me.BT = me.B.transpose()
 
     """
     In what follows x will be a function on the state-parameter product
@@ -236,23 +249,40 @@ class inverseRHS:
     objective -- return the value of the regularized data-misfit functional at x
     """
     def f(me, x):
-        X = dl.Function(me.Vh)
-        X.vector().set_local(x)
-        return dl.assemble((dl.Constant(0.5) * (X.sub(0)-me.ud)**2. + \
-                           dl.Constant(me.gamma1/2.)*X.sub(1)*X.sub(1) + \
-                           dl.Constant(me.gamma2/2.)*dl.inner(\
-                           dl.grad(X.sub(1)), dl.grad(X.sub(1))))*dl.dx(me.Vh.mesh()))
+        u   = x[:me.n1]
+        rho = x[me.n1:]
+        d   = me.ud.vector().get_local()
+        if me.B is None:
+            return 0.5 * np.inner( u - d, me.Mu.dot(u - d)) + 0.5 * np.inner(rho, me.R.dot(rho))
+        else:
+            return 0.5 * np.inner( me.B.dot(u-d), me.B.dot(u-d)) + 0.5 * np.inner(rho, me.R.dot(rho))
+        #X = dl.Function(me.Vh)
+        #X.vector().set_local(x)
+        #return #dl.assemble((dl.Constant(0.5) * (X.sub(0)-me.ud)**2. + \
+               #            dl.Constant(me.gamma1/2.)*X.sub(1)*X.sub(1) + \
+               #            dl.Constant(me.gamma2/2.)*dl.inner(\
+               #            dl.grad(X.sub(1)), dl.grad(X.sub(1))))*dl.dx(me.Vh.mesh()))
     """
     gradient -- return the variational derivative of J with respect to x
     """
     def Dxf(me, x):
-        X = dl.Function(me.Vh)
-        X.vector().set_local(x)
-        utest, rhotest = dl.TestFunctions(me.Vh)
-        return dl.assemble(((X.sub(0) - me.ud) * utest + \
-                            dl.Constant(me.gamma1) * X.sub(1) * rhotest + \
-                            dl.Constant(me.gamma2) * \
-                            dl.inner(dl.grad(X.sub(1)), dl.grad(rhotest)))*dl.dx(me.Vh.mesh())).get_local()
+        u   = x[:me.n1]
+        rho = x[me.n1:]
+        d   = me.ud.vector().get_local()
+        y   = np.zeros(me.n)
+        if me.B is None:
+            y[:me.n1] = me.Mu.dot(u-d)
+        else:
+            y[:me.n1] = me.BT.dot(me.B.dot(u-d))
+        y[me.n1:] = me.R.dot(rho)
+        return y
+        #X = dl.Function(me.Vh)
+        #X.vector().set_local(x)
+        #utest, rhotest = dl.TestFunctions(me.Vh)
+        #return dl.assemble(((X.sub(0) - me.ud) * utest + \
+        #                    dl.Constant(me.gamma1) * X.sub(1) * rhotest + \
+        #                    dl.Constant(me.gamma2) * \
+        #                    dl.inner(dl.grad(X.sub(1)), dl.grad(rhotest)))*dl.dx(me.Vh.mesh())).get_local()
     def Dxxfform(me, x):
         utest, mtest = dl.TestFunctions(me.Vh)
         utrial, mtrial = dl.TrialFunctions(me.Vh)
@@ -266,7 +296,12 @@ class inverseRHS:
     a linear mapping from primal to dual 
     """
     def Dxxf(me, x):
-        return dl.assemble(me.Dxxfform(x)).array()
+        if me.B is None:
+            y = sps.bmat([[me.Mu, None], [None, me.R]], format="csr")
+        else:
+            y = sps.bmat([[me.BT.dot(me.B), None], [None, me.R]], format="csr")
+        return y
+        #return dl.assemble(me.Dxxfform(x)).array()
     """
     constraints -- evaluate the PDE-constraint at x, returning a dual-vector 
     """    
@@ -327,7 +362,7 @@ class inverseRHS:
         return y
     def DxxL(me, X):
         x, lam, z = X[:]
-        y = csr_fenics2scipy(dl.assemble(me.Dxxfform(x) + me.Dxxcpform(x, lam)))
+        y = me.Dxxf(x) + csr_fenics2scipy(dl.assemble(me.Dxxcpform(x, lam)))
         return y
     def E(me, X, mu, smax):
         x, lam, z = X[:]

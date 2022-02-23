@@ -8,12 +8,13 @@ import problems as problemDefs
 
 
 class interior_pt:
-    def __init__(self, problems, linsolve_strategy):
+    def __init__(self, problems, linsolve_strategy, reducedprecond_strategy="regularization"):
         self.problems = problems
 
         problemDefMembers = inspect.getmembers(problemDefs, inspect.isclass)
         problemDefTypes   = [problemDefMembers[i][1] for i in range(len(problemDefMembers))]
         
+
         if type(self.problems) in problemDefTypes:
             # a single problem has been supplied
             self.problem = self.problems
@@ -26,12 +27,12 @@ class interior_pt:
 
         self.sparse_struct   = self.problem.sparse_struct
         self.linsolve_strategy = linsolve_strategy
-
+        self.reducedprecond_strategy  = reducedprecond_strategy
         if linsolve_strategy == "multigrid":
             if type(self.problems) is not list:
                 raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
             self.multigridHierarchy = multigridHierarchy(self.problems)
-        if linsolve_strategy in ["multigrid", "presmoothing"]:
+        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced"]:
             self.residuals = []
 
         # -------- lower-bound constraint
@@ -159,7 +160,7 @@ class interior_pt:
         drk    = -mu / (rho - self.rhol)
         return Ak, Jk, drk
 
-    def linsolve(self, A, b):
+    def linsolve(self, A, b, mu=None, D=None):
         if self.sparse_struct:
             W  = A[:self.n, :self.n]
             JT = A[:self.n, self.n:]
@@ -171,10 +172,36 @@ class interior_pt:
                                        self.multigridHierarchy.R, 1, Spost=self.multigridHierarchy.Spost)
             elif self.linsolve_strategy == "presmoothing":
                 M = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
+            elif self.linsolve_strategy == "prepostsmoothing":
+                S1 = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
+                S2 = ConstrainedPostSmoother(W, JT, J, self.problem.n1)
+                M = CumulativeSmoother(S1, S2, A)
+            elif self.linsolve_strategy == "reduced":
+                if self.reducedprecond_strategy == "regularization":
+                    M = regularizationSmoother(W[self.problem.n1:, self.problem.n1:] - D)
+                else:
+                    M = regularizationSmoother(sps.diags(W[self.problem.n1:, self.problem.n1:].diagonal(), format="csr"))
             if self.linsolve_strategy == "direct":
                 sol = spla.spsolve(A, b)
+            elif self.linsolve_strategy == "reduced":
+                Hreduced = reducedHessian(W, JT, J, self.problem.n1)
+                breduced = Hreduced.preprhs(b)
+                krylov_convergence = Krylov_convergence(Hreduced, breduced)
+                m, info = spla.cg(Hreduced, breduced, tol=1.e-12, atol=1.e-12, \
+                        M=M, maxiter=3000, callback=krylov_convergence.callback)
+                sol = Hreduced.backsolve(m)
+                if info > 0:
+                    print("solve failed!")
+                    res     = np.linalg.norm(A.dot(sol) - b)
+                    rel_res = res / np.linalg.norm(b)
+                    print("residual = {0:1.3e}".format(res))
+                    print("relative residaul = {0:1.3e}".format(res))
+                self.residuals.append(krylov_convergence.residuals)
             else:
-                lintol= 1.e-8
+                if mu == None:
+                    lintol= 1.e-12
+                else:
+                    lintol = max(np.sqrt(mu)*1.e-4, 1.e-8)
                 maxiter = 100
                 krylov_convergence = Krylov_convergence(A, b)
                 sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
@@ -192,6 +219,9 @@ class interior_pt:
         if not soc:
             print("-"*50+" determining search direction ")
         x, lam, z = self.split(X)
+        u          = x[:self.n1]
+        rho        = x[self.n1:]
+        dHrhorho = sps.diags(z / (rho - self.rhol))
         xhat      = np.zeros(self.n)
         lamhat    = np.zeros(self.m)
         zhat      = np.zeros(self.n2)
@@ -215,7 +245,7 @@ class interior_pt:
             else:
                 Ak[:self.n,:self.n] += self.deltalast * np.identity(self.n)
         
-        sol = self.linsolve(Ak, -rk)
+        sol = self.linsolve(Ak, -rk, D=dHrhorho)
                 
         """
         Here is where the inertia-correcting scheme will begin
@@ -247,8 +277,8 @@ class interior_pt:
             j_ic = 0
             while j_ic < self.max_ic:
                 if self.sparse_struct:
-                    Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * sps.identity(self.idx1), Ak[self.idx1:, :self.idx1]],\
-                                    [Ak[:self.idx1, self.idx1:], None]], format="csr")
+                    Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * sps.identity(self.idx1), Ak[:self.idx1, self.idx1:]],\
+                                    [Ak[self.idx1:, :self.idx1], None]], format="csr")
                 else:
                     Akdelta = np.zeros((self.idx2, self.idx2))
                     Akdelta[:,:] = Ak[:,:]
@@ -565,4 +595,3 @@ class interior_pt:
             if rhohati < 0.:
                 alpha_max = min(alpha_max, -1. * tau * (rhoi - rholi) / rhohati)
         return x + alpha_max * xhat, lam, z
-
