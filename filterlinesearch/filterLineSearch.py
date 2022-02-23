@@ -162,6 +162,8 @@ class interior_pt:
 
     def linsolve(self, A, b, mu=None, D=None):
         if self.sparse_struct:
+            lintol = 1.e-12
+            maxiter = 3000
             W  = A[:self.n, :self.n]
             JT = A[:self.n, self.n:]
             J  = A[self.n:, :self.n]
@@ -187,8 +189,8 @@ class interior_pt:
                 Hreduced = reducedHessian(W, JT, J, self.problem.n1)
                 breduced = Hreduced.preprhs(b)
                 krylov_convergence = Krylov_convergence(Hreduced, breduced)
-                m, info = spla.cg(Hreduced, breduced, tol=1.e-12, atol=1.e-12, \
-                        M=M, maxiter=3000, callback=krylov_convergence.callback)
+                m, info = spla.gmres(Hreduced, breduced, tol=lintol, atol=lintol, \
+                        M=M, maxiter=maxiter, callback=krylov_convergence.callback)
                 sol = Hreduced.backsolve(m)
                 if info > 0:
                     print("solve failed!")
@@ -198,11 +200,8 @@ class interior_pt:
                     print("relative residaul = {0:1.3e}".format(res))
                 self.residuals.append(krylov_convergence.residuals)
             else:
-                if mu == None:
-                    lintol= 1.e-12
-                else:
+                if mu is not None:
                     lintol = max(np.sqrt(mu)*1.e-4, 1.e-8)
-                maxiter = 100
                 krylov_convergence = Krylov_convergence(A, b)
                 sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
                                        M = M, maxiter=maxiter, callback=krylov_convergence.callback)
