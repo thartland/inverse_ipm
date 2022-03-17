@@ -710,3 +710,55 @@ class two_grid_action(spla.LinearOperator):
             x = x + e
             r = b - me.Lfine.dot(x)
         return x
+
+
+class multi_grid_action(spla.LinearOperator):
+    """
+    Inherit from spla.LinearOperator class so that
+    the action defined by the _matvec method can be
+    used as a preconditioner for Krylov solves.
+
+    Inputs:
+    Lfine   -- fine grid operator
+    Lcoarse -- coarse grid operator
+    S       -- fine grid smoother
+    R       -- restriction operator (fine to coarse grid)
+    P       -- projection operator  (coarse to fine grid)
+    m       -- number of pre and post smoothing steps
+    """
+    def __init__(me, Ls, Ss, Ps, Rs, m):
+        me.Ls      = Ls[::-1]      # sequence of operators ordered from fine to coarse
+        me.Ss      = Ss[::-1]      # sequence of smoothers
+        me.Ps      = Ps[::-1]      # projection (coarse to fine)
+        me.Rs      = Rs[::-1]      # restriction (fine to coarse)
+        me.m       = m       # number of pre and post smoothing steps
+        me.lvl     = len(me.Ls) # depth of the multigrid hierarchy
+        me.shape   = me.Ls[0].shape
+        me.dtype   = me.Ls[0].dtype
+    def single_level_action(me, b, lvl):
+        n = len(b)
+        x = np.zeros(n)
+        r = b.copy()
+        if lvl == me.lvl:
+            # direct solve on coarsest level
+            x = spla.spsolve(me.Ls[lvl-1], b)
+            return x
+        else:
+            # pre smoothing            
+            for i in range(me.m):
+                e = me.Ss[lvl-1].dot(r)
+                x = x + e
+                r = b - me.Ls[lvl-1].dot(x)
+            # request an update to the error from a coarser level
+            rcoarse = me.Rs[lvl-1].dot(r)
+            ecoarse = me.single_level_action(rcoarse, lvl+1)
+            e       = me.Ps[lvl-1].dot(ecoarse)
+            x       = x + e
+            # post smoothing
+            for i in range(me.m):
+                r = b - me.Ls[lvl-1].dot(x)
+                e = me.Ss[lvl-1].dot(r)
+                x = x + e
+            return x
+    def _matvec(me, b):
+        return me.single_level_action(b, 1)
