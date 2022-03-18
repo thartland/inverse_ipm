@@ -638,7 +638,14 @@ class regularizationSmoother(spla.LinearOperator):
     def _matvec(me, x):
         return me.dot(x)
 
-
+class inverseAction(spla.LinearOperator):
+    def __init__(me, A):
+        me.shape = A.shape
+        me.A   = A
+    def dot(me, x):
+        return spla.spsolve(me.A, x)
+    def _matvec(me, x):
+        return me.dot(x)
 
 class two_grid_action(spla.LinearOperator):
     """
