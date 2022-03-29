@@ -28,11 +28,14 @@ class interior_pt:
         self.sparse_struct   = self.problem.sparse_struct
         self.linsolve_strategy = linsolve_strategy
         self.reducedprecond_strategy  = reducedprecond_strategy
-        if linsolve_strategy == "multigrid":
+        if linsolve_strategy == "multigrid" or linsolve_strategy=="fullmultigrid":
             if type(self.problems) is not list:
                 raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
-            self.multigridHierarchy = multigridHierarchy(self.problems)
-        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced"]:
+            if linsolve_strategy == "multigrid":
+                self.twoGridHierarchy = twoGridHierarchy(self.problems)
+            else:
+                self.multiGridHierarchy = multiGridHierarchy(self.problems)
+        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid"]:
             self.residuals = []
 
         # -------- lower-bound constraint
@@ -170,10 +173,10 @@ class interior_pt:
             JT = A[:self.n, self.n:]
             J  = A[self.n:, :self.n]
             if self.linsolve_strategy == "multigrid":
-                self.multigridHierarchy.constructPreconditioner(W, JT, J, self.problem.n1)
-                M = two_grid_action(self.multigridHierarchy.Lfine, self.multigridHierarchy.Lcoarse,\
-                                       self.multigridHierarchy.Spre, self.multigridHierarchy.P,\
-                                       self.multigridHierarchy.R, 1, Spost=self.multigridHierarchy.Spost)
+                self.twoGridHierarchy.constructPreconditioner(W, JT, J, self.problem.n1)
+                M = two_grid_action(self.twoGridHierarchy.Lfine, self.twoGridHierarchy.Lcoarse,\
+                                       self.twoGridHierarchy.Spre, self.twoGridHierarchy.P,\
+                                       self.twoGridHierarchy.R, 1, Spost=self.twoGridHierarchy.Spost)
             elif self.linsolve_strategy == "presmoothing":
                 M = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
             elif self.linsolve_strategy == "prepostsmoothing":
@@ -185,6 +188,8 @@ class interior_pt:
                     M = regularizationSmoother(W[self.problem.n1:, self.problem.n1:] - D)
                 else:
                     M = regularizationSmoother(sps.diags(W[self.problem.n1:, self.problem.n1:].diagonal(), format="csr"))
+            elif self.linsolve_strategy == "fullmultigrid":
+                M = self.multiGridHierarchy.constructPreconditioner(A)
             if self.linsolve_strategy == "direct":
                 sol = spla.spsolve(A, b)
             elif self.linsolve_strategy == "reduced":

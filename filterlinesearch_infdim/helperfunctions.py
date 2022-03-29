@@ -37,7 +37,20 @@ def doublepass(A, k):
     U = QY.dot(Uhat.T)
     return U, Sig, V 
     
+
+def singlepass(A, k):
+    n = A.shape[0]
+    Omega = np.random.randn(n, k)
+    Y     = np.zeros((n,k))
+    for i in range(k):
+        Y[:, i] = A._matvec(Omega[:,i])
     
+
+
+
+
+
+
 def power_iteration(op, n, maxiter=400, tol=1.e-8):
     x0 = np.random.randn(n)
     lam0 = 0.
@@ -107,7 +120,7 @@ class Krylov_convergence:
 
 
 """
-MultigridHierarchy will be used to manage the construction
+twoGridHierarchy will be used to manage the construction
 of fine and coarse grid operators, projection/restriction operators and
 other necessary infastructure needed to from a fine grid point X = x, lam, z
 construct the associated interior-point Newton systems for various levels etc...
@@ -115,7 +128,7 @@ needed to ultimately use two_grid_action and Uzawa smoothing to solve
 IP-Newton system via Multigrid...
 """
 
-class multigridHierarchy:
+class twoGridHierarchy:
     def __init__(me, problems):
         me.problems = problems
         if not len(me.problems) == 2:
@@ -199,6 +212,109 @@ class multigridHierarchy:
         #me.Lcoarse = sps.bmat([[Wkcoarse, JkTcoarse],\
         #                       [Jkcoarse, None]], format="csr")
 
+"""
+multiGridHierarchy will be used to manage the construction
+of fine and coarse grid operators, projection/restriction operators and
+other necessary infastructure needed to from a fine grid point X = x, lam, z
+construct the associated interior-point Newton systems for various levels etc...
+needed to ultimately use two_grid_action and Uzawa smoothing to solve
+IP-Newton system via Multigrid...
+"""
+
+class multiGridHierarchy:
+    def __init__(me, problems):
+
+        me.problems = problems
+        
+        me.lvl      = len(me.problems) # depth of multigrid hierarcy
+        if me.lvl <= 1:
+            raise ValueError("EXPECTING MORE THAN ONE PROBLEM TO CONSTRUCT MULTIGRID HIERARCHY!!!!")
+
+
+        
+        me.P_states   = [csr_fenics2scipy(\
+                          dl.PETScDMCollection.create_transfer_matrix(\
+                          problems[i].Vh2, problems[i+1].Vh2)) for i in range(me.lvl-1)]
+        me.P_rhos     = [csr_fenics2scipy(\
+                           dl.PETScDMCollection.create_transfer_matrix(\
+                           problems[i].Vh1, problems[i+1].Vh1)) for i in range(me.lvl-1)]
+        me.R_states   = [me.P_states[i].transpose() for i in range(me.lvl-1)]
+        me.R_rhos     = [me.P_rhos[i].transpose() for i in range(me.lvl-1)]
+
+        me.Ps         = [sps.bmat([[me.P_states[i], None, None],\
+                                   [None, me.P_rhos[i], None],\
+                                   [None, None, me.P_states[i]]], format="csr") for i in range(me.lvl-1)]
+        me.Rs         = [sps.bmat([[me.R_states[i], None, None],\
+                                   [None, me.R_rhos[i], None],\
+                                   [None, None, me.R_states[i]]], format="csr") for i in range(me.lvl-1)]
+
+        me.As      = [None for i in range(me.lvl)]
+        me.Ss      = [None for i in range(me.lvl)]
+    """
+      from the IP-Newton system construct, coarse grid operators by Galerkin-projection
+      construct a sequence of smoothers as well
+    """
+    def constructPreconditioner(me, A, smoothingSteps=1):
+
+        me.As[-1] = A
+        for i in range(me.lvl-1)[::-1]:
+            me.As[i] = me.Rs[i].dot(me.As[i+1]).dot(me.Ps[i])
+
+        for i in range(me.lvl):
+            n  = me.problems[i].Vh.dim()
+            W  = me.As[i][:n, :n]
+            J  = me.As[i][n:, :n]
+            JT = me.As[i][:n, n:]
+            me.Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
+        return multi_grid_action(me.As, me.Ss, me.Ps, me.Rs, smoothingSteps)
+
+        #x, lam, z = X[:]
+        #n1 = me.problems[-1].n1
+        #rho = x[n1: ]
+        #Hk  = me.problems[-1].DxxL(X)
+        #Jk  = me.problems[-1].Dxc(x)
+        #JkT = Jk.transpose()
+        #dHk = sps.diags(z / (rho - me.problems[-1].rhol))
+        #Wk  = sps.bmat([[Hk[:n1, :n1], Hk[:n1, n1:]],\
+        #            [Hk[n1:, :n1], Hk[n1:, n1:] + dHk]], format="csr")
+        
+        # fine grid operator
+        #me.Lfine = sps.bmat([[Wk, JkT],\
+        #                     [Jk, None]], format="csr")
+
+
+        #me.Spre  = ConstrainedPreSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R = me.R_state)
+        #me.Spost = ConstrainedPostSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R=me.R_state)
+
+        #me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
+        
+
+
+        # coarse grid operator
+        #n1coarse  = me.problems[0].n1
+        #xcoarse   = me.Rx.dot(x)
+        #rhocoarse = xcoarse[n1coarse:]
+        #lamcoarse = me.R_state.dot(lam)
+
+        #zcoarse   = me.problems[0].Mm.dot(me.R_rho.dot(np.linalg.solve(me.problems[-1].Mm, z)))
+        #zcoarse = me.R_rho.dot(z)
+        #Xcoarse = [xcoarse, lamcoarse, zcoarse]
+
+        #Hkcoarse  = me.problems[0].DxxL(Xcoarse)
+        #Jkcoarse  = me.problems[0].Dxc(xcoarse)
+        #JkTcoarse = Jkcoarse.transpose()
+        #dHkcoarse = sps.diags(zcoarse / (rhocoarse - me.problems[0].rhol))
+        #if IPsys:
+        #    Wkcoarse  = sps.bmat([[Hkcoarse[:n1coarse, :n1coarse], Hkcoarse[:n1coarse, n1coarse:]],\
+        #                      [Hkcoarse[n1coarse:, :n1coarse], Hkcoarse[n1coarse:, n1coarse:] + dHkcoarse]],\
+        #                    format="csr")
+        #else:
+        #    Wkcoarse = Hkcoarse
+
+        # coarse grid operator
+        #me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
+        #me.Lcoarse = sps.bmat([[Wkcoarse, JkTcoarse],\
+        #                       [Jkcoarse, None]], format="csr")
 
 
 class Uzawa:
@@ -383,6 +499,133 @@ class CumulativeSmoother(spla.LinearOperator):
 
 
 
+"""
+ConstrainedPreSmoother
+This describes the action of a smoother
+S, wherein
+
+S^-1 = [[Wuu     0      JuT]
+        [Wmu diag(Wmm)  JmT]
+        [Ju      0       0 ]]
+
+this smoother is for a saddle point system
+
+A =    [[W  JT]
+        [J   0]]
+
+where
+
+W =    [[Wuu Wum]
+        [Wmu Wmm]]
+
+J      = [Ju Jm] 
+"""
+
+
+class SchurComplementSmoother(spla.LinearOperator):
+    def __init__(me, W, JT, J, n1):
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.n    = W.shape[0] + J.shape[0]
+        me.shape = (me.n, me.n)
+        me.dtype = W.dtype 
+
+        me.Wuu = W[:n1, :n1]
+        me.idx0 = 2 * me.Wuu.shape[0]
+        me.nu   = me.Wuu.shape[0]
+        me.Wmm = W[n1:, n1:]
+        me.Wmu = W[n1:, :n1]
+        me.Wum = me.Wmu.transpose()
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+
+        # consider the following permutation of (1)
+        # [[Wuu    Wurho   Ju^T ]
+        #  [Wrhou Wrhorho Jrho^T]
+        #  [Ju     Jrho     0   ]]
+        # to 
+        # K = [[A B^T]
+        #      [B -D]]
+        # where
+        # A = [[Wuu Ju^T]
+        #      [Ju   0  ]]
+        # B = [Wrhou Jrho^T]
+        # D = - Wrhorho
+        me.A  = sps.bmat([[me.Wuu, me.JuT], [me.Ju, None]], format="csr")
+        me.B  = sps.bmat([[me.Wmu, me.JmT]], format="csr")
+        me.BT = sps.bmat([[me.Wum],[me.Jm]], format="csr")
+        me.D  = -me.Wmm
+        # K is symmetrically decomposed as
+        # K = L M L^T
+        # L = [[I      0]
+        #      [B A^-1 I]]
+        # L^T = [[I   A^-1 B^T]
+        #        [0      I]]
+        # M   = [[A   0]
+        #        [0   S]]
+        # S = -D - B A^-1 B^T
+        # the preconditioner/smoother action described here is one whereby M is approximated
+        # in particular we approximate the Schur complement by Shat = -D
+        me.Shat = -me.D
+        # in order to apply Khat^-1
+        # where Khat = L Mhat L^T,
+        # Mhat = [[A     0 ]
+        #         [0   Shat]]
+        # we need Khat^-1 = L^-T Mhat^-1 L^-1
+        # L^-1 and L^-T applies are just as expensive as applying A^-1 as
+        # L^-1 = [[I        0]
+        #         [-B A^-1  I]]
+        # L^-T = [[I   -A^-1 B^T]
+        #         [0        I   ]]
+    def LinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y1 = x1
+        z  = spla.spsolve(me.A, x1)
+        y2 = x2 - me.B.dot(z)
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def LTinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y2 = x2
+        y1 = x1 - spla.spsolve(me.A, me.BT.dot(x2))
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def MhatinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y1 = spla.spsolve(me.A, x1)
+        y2 = spla.spsolve(me.Shat, x2)
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def dot(me, R):
+        # need to permute the rhs as we expect the IP-Newton system to be of the form (1)
+        b = np.zeros(me.n)
+        b[:me.nu]        = R[:me.nu]
+        b[me.nu:me.idx0] = R[me.idx0:]
+        b[me.idx0:]      = R[me.nu:me.idx0]
+        # apply the smoother
+        Ry = me.LTinvApply(me.MhatinvApply(me.LinvApply(b)))
+
+        x = np.zeros(me.n)
+        x[:me.nu]        = Ry[:me.nu]
+        x[me.nu:me.idx0] = Ry[me.idx0:]
+        x[me.idx0:]      = Ry[me.nu:me.idx0]
+        return x
+    def _matvec(me, b):
+        return me.dot(b)
 
 
 
@@ -646,6 +889,10 @@ class inverseAction(spla.LinearOperator):
         return spla.spsolve(me.A, x)
     def _matvec(me, x):
         return me.dot(x)
+
+
+
+
 
 class two_grid_action(spla.LinearOperator):
     """
