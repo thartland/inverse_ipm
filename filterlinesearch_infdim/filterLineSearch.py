@@ -5,7 +5,7 @@ import scipy.sparse.linalg as spla
 from helperfunctions import *
 import sys, inspect
 import problems as problemDefs
-
+from pyamg.krylov import gmres
 
 class interior_pt:
     def __init__(self, problems, linsolve_strategy, reducedprecond_strategy="regularization"):
@@ -195,17 +195,19 @@ class interior_pt:
             elif self.linsolve_strategy == "reduced":
                 Hreduced = reducedHessian(W, JT, J, self.problem.n1)
                 breduced = Hreduced.preprhs(b)
-                krylov_convergence = Krylov_convergence(Hreduced, breduced)
-                m, info = spla.gmres(Hreduced, breduced, tol=lintol, atol=lintol, \
-                        M=M, maxiter=maxiter, callback=krylov_convergence.callback)
+                #krylov_convergence = Krylov_convergence(Hreduced, breduced)
+                #m, info = spla.gmres(Hreduced, breduced, tol=lintol, atol=lintol, \
+                #        M=M, maxiter=maxiter, callback=krylov_convergence.callback)
+                res = list()
+                m, info = gmres(Hreduced, breduced, tol=lintol, M=M, residuals=res)
                 sol = Hreduced.backsolve(m)
                 if info > 0:
-                    print("solve failed!")
-                    res     = np.linalg.norm(A.dot(sol) - b)
-                    rel_res = res / np.linalg.norm(b)
-                    print("residual = {0:1.3e}".format(res))
-                    print("relative residaul = {0:1.3e}".format(res))
-                self.residuals.append(krylov_convergence.residuals)
+                    raise RuntimeError("linear solve failure!")
+                    #res     = np.linalg.norm(A.dot(sol) - b)
+                    #rel_res = res / np.linalg.norm(b)
+                    #print("residual = {0:1.3e}".format(res))
+                    #print("relative residaul = {0:1.3e}".format(res))
+                self.residuals.append(res)
             else:
                 if mu is not None:
                     lintol = max(np.sqrt(mu)*1.e-4, 1.e-8)
