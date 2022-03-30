@@ -248,73 +248,25 @@ class multiGridHierarchy:
                                    [None, me.R_rhos[i], None],\
                                    [None, None, me.R_states[i]]], format="csr") for i in range(me.lvl-1)]
 
-        me.As      = [None for i in range(me.lvl)]
-        me.Ss      = [None for i in range(me.lvl)]
     """
       from the IP-Newton system construct, coarse grid operators by Galerkin-projection
       construct a sequence of smoothers as well
     """
     def constructPreconditioner(me, A, smoothingSteps=1):
-
-        me.As[-1] = A
+        As = [None for i in range(me.lvl)]
+        Ss = [None for i in range(me.lvl)]
+        
+        As[-1] = A
         for i in range(me.lvl-1)[::-1]:
-            me.As[i] = me.Rs[i].dot(me.As[i+1]).dot(me.Ps[i])
+            As[i] = me.Rs[i].dot(As[i+1]).dot(me.Ps[i])
 
         for i in range(me.lvl):
             n  = me.problems[i].Vh.dim()
-            W  = me.As[i][:n, :n]
-            J  = me.As[i][n:, :n]
-            JT = me.As[i][:n, n:]
-            me.Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
-        return multi_grid_action(me.As, me.Ss, me.Ps, me.Rs, smoothingSteps)
-
-        #x, lam, z = X[:]
-        #n1 = me.problems[-1].n1
-        #rho = x[n1: ]
-        #Hk  = me.problems[-1].DxxL(X)
-        #Jk  = me.problems[-1].Dxc(x)
-        #JkT = Jk.transpose()
-        #dHk = sps.diags(z / (rho - me.problems[-1].rhol))
-        #Wk  = sps.bmat([[Hk[:n1, :n1], Hk[:n1, n1:]],\
-        #            [Hk[n1:, :n1], Hk[n1:, n1:] + dHk]], format="csr")
-        
-        # fine grid operator
-        #me.Lfine = sps.bmat([[Wk, JkT],\
-        #                     [Jk, None]], format="csr")
-
-
-        #me.Spre  = ConstrainedPreSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R = me.R_state)
-        #me.Spost = ConstrainedPostSmoother(Wk, JkT, Jk, n1, Mgrid=True, P = me.P_state, R=me.R_state)
-
-        #me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
-        
-
-
-        # coarse grid operator
-        #n1coarse  = me.problems[0].n1
-        #xcoarse   = me.Rx.dot(x)
-        #rhocoarse = xcoarse[n1coarse:]
-        #lamcoarse = me.R_state.dot(lam)
-
-        #zcoarse   = me.problems[0].Mm.dot(me.R_rho.dot(np.linalg.solve(me.problems[-1].Mm, z)))
-        #zcoarse = me.R_rho.dot(z)
-        #Xcoarse = [xcoarse, lamcoarse, zcoarse]
-
-        #Hkcoarse  = me.problems[0].DxxL(Xcoarse)
-        #Jkcoarse  = me.problems[0].Dxc(xcoarse)
-        #JkTcoarse = Jkcoarse.transpose()
-        #dHkcoarse = sps.diags(zcoarse / (rhocoarse - me.problems[0].rhol))
-        #if IPsys:
-        #    Wkcoarse  = sps.bmat([[Hkcoarse[:n1coarse, :n1coarse], Hkcoarse[:n1coarse, n1coarse:]],\
-        #                      [Hkcoarse[n1coarse:, :n1coarse], Hkcoarse[n1coarse:, n1coarse:] + dHkcoarse]],\
-        #                    format="csr")
-        #else:
-        #    Wkcoarse = Hkcoarse
-
-        # coarse grid operator
-        #me.Lcoarse = me.R.dot(me.Lfine).dot(me.P)
-        #me.Lcoarse = sps.bmat([[Wkcoarse, JkTcoarse],\
-        #                       [Jkcoarse, None]], format="csr")
+            W  = As[i][:n, :n]
+            J  = As[i][n:, :n]
+            JT = As[i][:n, n:]
+            Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
+        return multi_grid_action(As, Ss, me.Ps, me.Rs, smoothingSteps)
 
 
 class Uzawa:

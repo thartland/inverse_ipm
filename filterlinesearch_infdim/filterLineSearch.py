@@ -211,10 +211,15 @@ class interior_pt:
             else:
                 if mu is not None:
                     lintol = max(np.sqrt(mu)*1.e-4, 1.e-8)
-                krylov_convergence = Krylov_convergence(A, b)
-                sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
-                                       M = M, maxiter=maxiter, callback=krylov_convergence.callback)
-                self.residuals.append(krylov_convergence.residuals)
+                res = list()
+                sol, info = gmres(A, b, tol=lintol, M=M, maxiter=maxiter, residuals=res)
+                if info > 0:
+                    raise RuntimeError("linear solve failure!")
+                self.residuals.append(res)
+                #krylov_convergence = Krylov_convergence(A, b)
+                #sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
+                #                       M = M, maxiter=maxiter, callback=krylov_convergence.callback)
+                #self.residuals.append(krylov_convergence.residuals)
         else:
             sol = np.linalg.solve(A, b)
         return sol 
