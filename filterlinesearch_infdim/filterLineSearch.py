@@ -212,7 +212,7 @@ class interior_pt:
                 if mu is not None:
                     lintol = max(np.sqrt(mu)*1.e-4, 1.e-8)
                 res = list()
-                sol, info = gmres(A, b, tol=lintol, M=M, maxiter=maxiter, residuals=res)
+                sol, info = gmres(A, b, tol=lintol, M=M, restrt=maxiter, maxiter=1, residuals=res)
                 if info > 0:
                     raise RuntimeError("linear solve failure!")
                 self.residuals.append(res)
