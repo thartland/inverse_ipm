@@ -208,7 +208,10 @@ class interior_pt:
                 sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
                                        M = M, maxiter=maxiter, callback=krylov_convergence.callback)
             if not info == 0:
+                for res in krylov_convergence.residuals:
+                    print("res = {0:1.3e}".format(res))
                 raise RuntimeError("linear solve failure!")
+
             else:
                 self.residuals.append(krylov_convergence.residuals)
         else:
