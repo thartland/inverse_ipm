@@ -28,7 +28,7 @@ class interior_pt:
         self.sparse_struct   = self.problem.sparse_struct
         self.linsolve_strategy = linsolve_strategy
         self.reducedprecond_strategy  = reducedprecond_strategy
-        if linsolve_strategy == "multigrid" or linsolve_strategy=="fullmultigrid" or linesolve_strategy=="Enrichedfullmultigrid":
+        if linsolve_strategy == "multigrid" or linsolve_strategy=="fullmultigrid" or linsolve_strategy=="Enrichedfullmultigrid":
             if type(self.problems) is not list:
                 raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
             if linsolve_strategy == "multigrid":
