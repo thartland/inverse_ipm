@@ -56,7 +56,7 @@ def power_iteration(op, n, maxiter=400, tol=1.e-8):
     lam0 = 0.
     for i in range(maxiter):
         x1 = op(x0)
-        lam1 = np.linalg.norm(x1)/np.linalg.norm(x0)
+        lam1 = np.inner(x1, x0)/np.linalg.norm(x0)
         x1 = x1 / np.linalg.norm(x1)
         if abs(lam0 - lam1)/ max(lam0, lam1) < tol:
             break
@@ -252,7 +252,7 @@ class multiGridHierarchy:
       from the IP-Newton system construct, coarse grid operators by Galerkin-projection
       construct a sequence of smoothers as well
     """
-    def constructPreconditioner(me, A, smoothingSteps=1):
+    def constructPreconditioner(me, A, smoothingSteps=1, strategy=1, substrategy=2, maxiter=5):
         As = [None for i in range(me.lvl)]
         Ss = [None for i in range(me.lvl)]
         
@@ -265,7 +265,9 @@ class multiGridHierarchy:
             W  = As[i][:n, :n]
             J  = As[i][n:, :n]
             JT = As[i][:n, n:]
-            Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
+            if strategy == 1:
+                Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
+                Ss[i] = EnrichedSchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim(), strategy=substrategy, maxiter=maxiter)
         return multi_grid_action(As, Ss, me.Ps, me.Rs, smoothingSteps)
 
 
@@ -475,7 +477,8 @@ J      = [Ju Jm]
 
 
 class SchurComplementSmoother(spla.LinearOperator):
-    def __init__(me, W, JT, J, n1):
+    def __init__(me, W, JT, J, n1, strategy=1):
+        me.strategy = strategy
         me.W  = W
         me.JT = JT
         me.J  = J
@@ -512,6 +515,27 @@ class SchurComplementSmoother(spla.LinearOperator):
         me.B  = sps.bmat([[me.Wmu, me.JmT]], format="csr")
         me.BT = sps.bmat([[me.Wum],[me.Jm]], format="csr")
         me.D  = -me.Wmm
+        if me.strategy == 1:
+            me.Shat = -me.D
+        else:
+            if me.strategy == 2 or me.strategy == 3:
+                DJuinv = sps.diags(1. / me.Ju.diagonal())
+                DJuTinv = sps.diags(1. / me.JuT.diagonal())
+            elif me.strategy == 4 or me.strategy == 5:
+                DJuinv = spla.inv(sps.tril(me.Ju))
+                DJuTinv = spla.inv(sps.triu(me.JuT))
+            else:
+                DJuinv = spla.inv(me.Ju)
+                DJuTinv = spla.inv(me.JuT)
+            if me.strategy > 2:
+                SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
+                Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
+            else:
+                Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, None]], format="csr")
+            if me.strategy < 5:
+                me.Shat = -me.D - sps.diags((me.B.dot(Atildeinv).dot(me.BT)).diagonal())
+            else:
+                me.Shat = -me.D - me.B.dot(Atildeinv).dot(me.BT)
         # K is symmetrically decomposed as
         # K = L M L^T
         # L = [[I      0]
@@ -523,7 +547,7 @@ class SchurComplementSmoother(spla.LinearOperator):
         # S = -D - B A^-1 B^T
         # the preconditioner/smoother action described here is one whereby M is approximated
         # in particular we approximate the Schur complement by Shat = -D
-        me.Shat = -me.D
+
         # in order to apply Khat^-1
         # where Khat = L Mhat L^T,
         # Mhat = [[A     0 ]
@@ -578,6 +602,168 @@ class SchurComplementSmoother(spla.LinearOperator):
         return x
     def _matvec(me, b):
         return me.dot(b)
+
+
+
+
+
+
+"""
+Define the Schur-Complement action
+S = -D - B A^-1 B^T
+associated to the saddle point system
+
+K = [[A    B^T]
+     [B    -D ]]
+
+"""
+class SchurComplementAction(spla.LinearOperator):
+    def __init__(me, A, BT, B, D):
+        me.A  = A
+        me.BT = BT
+        me.B  = B
+        me.D  = D
+        me.shape = me.D.shape
+        me.dtype = me.D.dtype
+    def dot(me, x):
+        y = -me.D.dot(x) - me.B.dot(spla.spsolve(me.A, me.BT.dot(x)))
+        return y
+    def _matvec(me, x):
+        return me.dot(x)
+
+
+
+class EnrichedSchurComplementSmoother(spla.LinearOperator):
+    def __init__(me, W, JT, J, n1, maxiter=10, strategy = 1):
+        me.strategy = strategy
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.n    = W.shape[0] + J.shape[0]
+        me.shape = (me.n, me.n)
+        me.dtype = W.dtype 
+        me.maxiter = maxiter
+
+        me.Wuu = W[:n1, :n1]
+        me.idx0 = 2 * me.Wuu.shape[0]
+        me.nu   = me.Wuu.shape[0]
+        me.Wmm = W[n1:, n1:]
+        me.Wmu = W[n1:, :n1]
+        me.Wum = me.Wmu.transpose()
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+
+        # consider the following permutation of (1)
+        # [[Wuu    Wurho   Ju^T ]
+        #  [Wrhou Wrhorho Jrho^T]
+        #  [Ju     Jrho     0   ]]
+        # to 
+        # K = [[A B^T]
+        #      [B -D]]
+        # where
+        # A = [[Wuu Ju^T]
+        #      [Ju   0  ]]
+        # B = [Wrhou Jrho^T]
+        # D = - Wrhorho
+        me.A    = sps.bmat([[me.Wuu, me.JuT], [me.Ju, None]], format="csr")
+        me.B    = sps.bmat([[me.Wmu, me.JmT]], format="csr")
+        me.BT   = sps.bmat([[me.Wum],[me.Jm]], format="csr")
+        me.D    = -me.Wmm
+        if me.strategy == 1:
+            me.Shat = -me.D
+        elif me.strategy == 2:
+            me.Shat = -sps.diags(me.D.diagonal())
+        elif me.strategy == 3:
+            DJuinv = sps.diags(1. / me.Ju.diagonal())
+            DJuTinv = sps.diags(1. / me.JuT.diagonal())
+            SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
+            Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
+            me.Shat = -sps.diags(me.D.diagonal()) - sps.diags((me.B.dot(Atildeinv).dot(me.BT)).diagonal())
+        else:
+            DJuinv = sps.diags(1. / me.Ju.diagonal())
+            DJuTinv = sps.diags(1. / me.JuT.diagonal())
+            SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
+            Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
+            me.Shat = sps.tril(-me.D - me.B.dot(Atildeinv).dot(me.BT))
+
+        me.S    = SchurComplementAction(me.A, me.BT, me.B, me.D)
+
+        me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: spla.spsolve(me.Shat, x))
+
+        # K is symmetrically decomposed as
+        # K = L M L^T
+        # L = [[I      0]
+        #      [B A^-1 I]]
+        # L^T = [[I   A^-1 B^T]
+        #        [0      I]]
+        # M   = [[A   0]
+        #        [0   S]]
+        # S = -D - B A^-1 B^T
+        # the preconditioner/smoother action described here is one whereby M is approximated
+        # in particular we approximate the Schur complement by Shat = -D
+
+        # in order to apply Khat^-1
+        # where Khat = L Mhat L^T,
+        # Mhat = [[A     0 ]
+        #         [0   Shat]]
+        # we need Khat^-1 = L^-T Mhat^-1 L^-1
+        # L^-1 and L^-T applies are just as expensive as applying A^-1 as
+        # L^-1 = [[I        0]
+        #         [-B A^-1  I]]
+        # L^-T = [[I   -A^-1 B^T]
+        #         [0        I   ]]
+    def LinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y1 = x1
+        z = Atildeinv.dot(x1)
+        y2 = x2 - me.B.dot(z)
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def LTinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y2 = x2
+        y1 = x1 - spla.spsolve(me.A, me.BT.dot(x2))
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def MhatinvApply(me, x):
+        x1 = x[:me.idx0]
+        x2 = x[me.idx0:]
+        y  = np.zeros(me.n)
+        y1 = spla.spsolve(me.A, x1)
+        y2, errorCode = spla.cg(me.S, x2, M=me.MShat, maxiter=me.maxiter)
+        if errorCode < 0:
+            print("illegal input or breakdown")
+        #y2 = spla.spsolve(me.Shat, x2)
+        y[:me.idx0] = y1[:]
+        y[me.idx0:] = y2[:]
+        return y
+    def dot(me, R):
+        # need to permute the rhs as we expect the IP-Newton system to be of the form (1)
+        b = np.zeros(me.n)
+        b[:me.nu]        = R[:me.nu]
+        b[me.nu:me.idx0] = R[me.idx0:]
+        b[me.idx0:]      = R[me.nu:me.idx0]
+        # apply the smoother
+        Ry = me.LTinvApply(me.MhatinvApply(me.LinvApply(b)))
+
+        x = np.zeros(me.n)
+        x[:me.nu]        = Ry[:me.nu]
+        x[me.nu:me.idx0] = Ry[me.idx0:]
+        x[me.idx0:]      = Ry[me.nu:me.idx0]
+        return x
+    def _matvec(me, b):
+        return me.dot(b)
+
 
 
 
