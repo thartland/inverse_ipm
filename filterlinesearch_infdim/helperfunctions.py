@@ -678,6 +678,7 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
             me.Shat = -me.D
         elif me.strategy == 2:
             me.Shat = -sps.diags(me.D.diagonal())
+            me.DShat = -me.D.diagonal()
         elif me.strategy == 3:
             DJuinv = sps.diags(1. / me.Ju.diagonal())
             DJuTinv = sps.diags(1. / me.JuT.diagonal())
@@ -690,10 +691,10 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
             SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
             Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
             me.Shat = sps.tril(-me.D - me.B.dot(Atildeinv).dot(me.BT))
-
-        me.S    = SchurComplementAction(me.A, me.BT, me.B, me.D)
-
-        me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: spla.spsolve(me.Shat, x))
+        me.S     = SchurComplementAction(me.A, me.BT, me.B, me.D)
+        if me.strategy == 2:
+            me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: x / me.DShat)
+            me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: spla.spsolve(me.Shat, x))
 
         # K is symmetrically decomposed as
         # K = L M L^T
