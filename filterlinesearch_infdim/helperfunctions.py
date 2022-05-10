@@ -722,7 +722,7 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         x2 = x[me.idx0:]
         y  = np.zeros(me.n)
         y1 = x1
-        z = Atildeinv.dot(x1)
+        z  = spla.spsolve(me.A, x1)
         y2 = x2 - me.B.dot(z)
         y[:me.idx0] = y1[:]
         y[me.idx0:] = y2[:]
