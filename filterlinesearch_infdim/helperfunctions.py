@@ -741,7 +741,7 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         x2 = x[me.idx0:]
         y  = np.zeros(me.n)
         y1 = spla.spsolve(me.A, x1)
-        y2, errorCode = spla.cg(me.S, x2, M=me.MShat, maxiter=me.maxiter)
+        y2, errorCode = spla.bicgstab(me.S, x2, M=me.MShat, maxiter=me.maxiter)
         if errorCode < 0:
             print("illegal input or breakdown")
         #y2 = spla.spsolve(me.Shat, x2)
