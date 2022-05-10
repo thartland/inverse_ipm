@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
-from pyamg.krylov import cg
+from pyamg.krylov import cg, bicgstab
 
 try:
     import dolfin as dl
@@ -741,7 +741,7 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         x2 = x[me.idx0:]
         y  = np.zeros(me.n)
         y1 = spla.spsolve(me.A, x1)
-        y2, errorCode = cg(me.S, x2, M=me.MShat, maxiter=me.maxiter)
+        y2, errorCode = bicgstab(me.S, x2, M=me.MShat, tol=1.e-14, maxiter=me.maxiter)
         if errorCode < 0:
             print("illegal input or breakdown")
         #y2 = spla.spsolve(me.Shat, x2)
