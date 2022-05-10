@@ -28,14 +28,14 @@ class interior_pt:
         self.sparse_struct   = self.problem.sparse_struct
         self.linsolve_strategy = linsolve_strategy
         self.reducedprecond_strategy  = reducedprecond_strategy
-        if linsolve_strategy == "multigrid" or linsolve_strategy=="fullmultigrid":
+        if linsolve_strategy == "multigrid" or linsolve_strategy=="fullmultigrid" or linesolve_strategy=="Enrichedfullmultigrid":
             if type(self.problems) is not list:
                 raise RuntimeError("a list of problems must be supplied in order to utilize a multigrid strategy")
             if linsolve_strategy == "multigrid":
                 self.twoGridHierarchy = twoGridHierarchy(self.problems)
             else:
                 self.multiGridHierarchy = multiGridHierarchy(self.problems)
-        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid"]:
+        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid", "Enrichedfullmultigrid"]:
             self.residuals = []
 
         # -------- lower-bound constraint
@@ -190,6 +190,8 @@ class interior_pt:
                     M = regularizationSmoother(sps.diags(W[self.problem.n1:, self.problem.n1:].diagonal(), format="csr"))
             elif self.linsolve_strategy == "fullmultigrid":
                 M = self.multiGridHierarchy.constructPreconditioner(A)
+            elif self.linsolve_strategy == "Enrichedfullmultigrid":
+                M = self.multiGridHierarchy.constructPreconditioner(A, strategy=2)
             if self.linsolve_strategy == "direct":
                 sol = spla.spsolve(A, b)
             elif self.linsolve_strategy == "reduced":

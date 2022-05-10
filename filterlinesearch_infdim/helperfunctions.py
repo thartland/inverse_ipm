@@ -267,6 +267,7 @@ class multiGridHierarchy:
             JT = As[i][:n, n:]
             if strategy == 1:
                 Ss[i] = SchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim())
+            else:
                 Ss[i] = EnrichedSchurComplementSmoother(W, JT, J, me.problems[i].Vh2.dim(), strategy=substrategy, maxiter=maxiter)
         return multi_grid_action(As, Ss, me.Ps, me.Rs, smoothingSteps)
 
