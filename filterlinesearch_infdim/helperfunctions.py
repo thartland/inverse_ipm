@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 from pyamg.krylov import cg, bicgstab
-
+import pyamg
 try:
     import dolfin as dl
 except:
@@ -38,19 +38,6 @@ def doublepass(A, k):
     return U, Sig, V 
     
 
-def singlepass(A, k):
-    n = A.shape[0]
-    Omega = np.random.randn(n, k)
-    Y     = np.zeros((n,k))
-    for i in range(k):
-        Y[:, i] = A._matvec(Omega[:,i])
-    
-
-
-
-
-
-
 def power_iteration(op, n, maxiter=400, tol=1.e-8):
     x0 = np.random.randn(n)
     lam0 = 0.
@@ -77,10 +64,13 @@ def grad_check(F, gradF, x0, xhat, save=False, title='myfig.png'):
             grad_err[j] = np.linalg.norm((Fplus - F0)/ eps - gradF0.dot(xhat), 2)
         else:
             grad_err[j] = np.abs((Fplus - F0) / eps - np.inner(gradF0, xhat))
-    plt.plot(epss, grad_err, '-ob')
+    plt.plot(epss, grad_err, '-ob', label=r'$|(F(x_0+\varepsilon)-F(x_0))/\varepsilon - \mathrm{d}F/\mathrm{d}x(x_0)|$')
+    plt.plot(epss, 0.5*epss, '--k', label=r'$y = C x$ (reference)')
     plt.xscale('log')
     plt.yscale('log')
+    plt.xlabel(r'$\varepsilon$')
     plt.grid()
+    plt.legend(loc='lower right')
     plt.title('finite difference check')
     if save:
         plt.savefig(title)
@@ -89,6 +79,10 @@ def grad_check(F, gradF, x0, xhat, save=False, title='myfig.png'):
     else:
         plt.show()
         plt.close()
+
+
+
+
 
 
 
@@ -519,24 +513,28 @@ class SchurComplementSmoother(spla.LinearOperator):
         if me.strategy == 1:
             me.Shat = -me.D
         else:
-            if me.strategy == 2 or me.strategy == 3:
+            if me.strategy in [2, 3]:
                 DJuinv = sps.diags(1. / me.Ju.diagonal())
                 DJuTinv = sps.diags(1. / me.JuT.diagonal())
-            elif me.strategy == 4 or me.strategy == 5:
-                DJuinv = spla.inv(sps.tril(me.Ju))
+            elif me.strategy in [4, 5]:
+                DJuinv  = spla.inv(sps.tril(me.Ju))
                 DJuTinv = spla.inv(sps.triu(me.JuT))
-            else:
-                DJuinv = spla.inv(me.Ju)
+            elif me.strategy in [6, 7, 8]:
+                DJuinv  = spla.inv(me.Ju)
                 DJuTinv = spla.inv(me.JuT)
             if me.strategy > 2:
-                SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
+                SA        = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv) # Schur complement of A
                 Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
             else:
                 Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, None]], format="csr")
             if me.strategy < 5:
                 me.Shat = -me.D - sps.diags((me.B.dot(Atildeinv).dot(me.BT)).diagonal())
-            else:
+            elif me.strategy in [5, 6]:
                 me.Shat = -me.D - me.B.dot(Atildeinv).dot(me.BT)
+            elif me.strategy == 7:
+                me.Shat = sps.diags((-me.D - me.B.dot(Atildeinv).dot(me.BT)).diagonal())
+            elif me.strategy == 8:
+                me.Shat = -me.D - sps.diags((me.B.dot(Atildeinv).dot(me.BT)).diagonal())
         # K is symmetrically decomposed as
         # K = L M L^T
         # L = [[I      0]
@@ -595,7 +593,6 @@ class SchurComplementSmoother(spla.LinearOperator):
         b[me.idx0:]      = R[me.nu:me.idx0]
         # apply the smoother
         Ry = me.LTinvApply(me.MhatinvApply(me.LinvApply(b)))
-
         x = np.zeros(me.n)
         x[:me.nu]        = Ry[:me.nu]
         x[me.nu:me.idx0] = Ry[me.idx0:]
@@ -603,10 +600,6 @@ class SchurComplementSmoother(spla.LinearOperator):
         return x
     def _matvec(me, b):
         return me.dot(b)
-
-
-
-
 
 
 """
@@ -640,13 +633,11 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         me.W  = W
         me.JT = JT
         me.J  = J
-
         me.n1 = n1
         me.n    = W.shape[0] + J.shape[0]
         me.shape = (me.n, me.n)
         me.dtype = W.dtype 
         me.maxiter = maxiter
-
         me.Wuu = W[:n1, :n1]
         me.idx0 = 2 * me.Wuu.shape[0]
         me.nu   = me.Wuu.shape[0]
@@ -674,26 +665,28 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         me.B    = sps.bmat([[me.Wmu, me.JmT]], format="csr")
         me.BT   = sps.bmat([[me.Wum],[me.Jm]], format="csr")
         me.D    = -me.Wmm
+        me.S    = SchurComplementAction(me.A, me.BT, me.B, me.D)
+
+        me.omega = 1.
         if me.strategy == 1:
             me.Shat = -me.D
         elif me.strategy == 2:
             me.DShat = -me.D.diagonal()
             me.Shat  = sps.diags(me.DShat)
-        elif me.strategy == 3:
-            DJuinv = sps.diags(1. / me.Ju.diagonal())
-            DJuTinv = sps.diags(1. / me.JuT.diagonal())
-            SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
-            Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
-            me.Shat = -sps.diags(me.D.diagonal()) - sps.diags((me.B.dot(Atildeinv).dot(me.BT)).diagonal())
         else:
-            DJuinv = sps.diags(1. / me.Ju.diagonal())
-            DJuTinv = sps.diags(1. / me.JuT.diagonal())
+            DJuinv  = sps.diags(me.omega / me.Ju.diagonal())
+            DJuTinv = sps.diags(me.omega / me.JuT.diagonal())
             SA      = -1. * DJuTinv.dot(me.Wuu).dot(DJuinv)
             Atildeinv = sps.bmat([[None, DJuinv], [DJuTinv, SA]], format="csr")
-            me.Shat = sps.tril(-me.D - me.B.dot(Atildeinv).dot(me.BT))
-        me.S     = SchurComplementAction(me.A, me.BT, me.B, me.D)
-        if me.strategy == 2:
+            if me.strategy == 3:
+                me.DShat = -me.D.diagonal() - (me.B.dot(Atildeinv).dot(me.BT)).diagonal()
+                me.Shat  = sps.diags(me.DShat)
+            else:
+                me.Shat  = sps.tril(-me.D - me.B.dot(Atildeinv).dot(me.BT), format="csr") 
+        if me.strategy in [2, 3]:
             me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: x / me.DShat)
+        else:
+            me.MShat = spla.LinearOperator(me.Shat.shape, matvec = lambda x: spla.spsolve(me.Shat, x))
 
         # K is symmetrically decomposed as
         # K = L M L^T
@@ -744,7 +737,6 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         y2, errorCode = bicgstab(me.S, x2, M=me.MShat, tol=1.e-14, maxiter=me.maxiter)
         if errorCode < 0:
             print("illegal input or breakdown")
-        #y2 = spla.spsolve(me.Shat, x2)
         y[:me.idx0] = y1[:]
         y[me.idx0:] = y2[:]
         return y
@@ -766,6 +758,91 @@ class EnrichedSchurComplementSmoother(spla.LinearOperator):
         return me.dot(b)
 
 
+"""
+Gauss Siedel
+This describes the action of a smoother
+S, wherein
+
+S^-1 = [[Wuu     0      JuT]
+        [Wmu    Wmm     JmT]
+        [Ju      0       0 ]]
+
+this smoother is for a saddle point system
+
+A =    [[W  JT]
+        [J   0]]
+
+where
+
+W =    [[Wuu Wum]
+        [Wmu Wmm]]
+
+J      = [Ju Jm] 
+"""
+
+
+class GaussSeidel(spla.LinearOperator):
+    def __init__(me, W, JT, J, n1, Mgrid=False):
+        me.W  = W
+        me.JT = JT
+        me.J  = J
+
+        me.n1 = n1
+        me.idx0 = W.shape[0]
+        me.n    = W.shape[0] + J.shape[0]
+        me.shape = (me.n, me.n)
+        me.dtype = W.dtype 
+
+        me.Wuu = W[:n1, :n1]
+        me.Wmm = W[n1:, n1:]
+        me.Wmu = W[n1:, :n1]
+        me.Ju  = J[:,:n1]
+        me.Jm  = J[:,n1:]
+        me.JuT = me.Ju.transpose()
+        me.JmT = me.Jm.transpose()
+        
+        me.Mgrid = Mgrid
+        
+        if me.Mgrid:
+            mlWmm    = pyamg.ruge_stuben_solver(me.Wmm)
+            me.MWmm  = mlWmm.aspreconditioner(cycle='V')
+            mlJu     = pyamg.ruge_stuben_solver(me.Ju)
+            me.MJu   = mlJu.aspreconditioner(cycle='V')
+            mlJuT    = pyamg.ruge_stuben_solver(me.JuT)
+            me.MJuT  = mlJuT.aspreconditioner(cycle='V')
+            
+
+    def dot(me, R):
+        R1 = R[:me.n1]
+        R2 = R[me.n1:me.idx0]
+        R3 = R[me.idx0:]
+
+        # S R = z
+        z  = np.zeros(me.n)
+        
+        if me.Mgrid:
+            krylov_convergence = Krylov_convergence(me.Ju, R3, residual_callback=False)
+            du, info = spla.cg(me.Ju, R3, tol=1.e-13, maxiter=100, M = me.MJu, callback=krylov_convergence.callback)
+            if info > 0:
+                print("Ju CG solve failure in GS preconditioner!!!")
+            dy, info = spla.cg(me.JuT, R1 - me.Wuu.dot(du), tol=1.e-13, maxiter=100, M=me.MJuT)
+            if info > 0:
+                print("Ju^T CG solve failure in GS preconditioner!!!")
+            dm, info = spla.cg(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy), tol=1.e-13, maxiter=100, M=me.MWmm)
+            if info > 0:
+                print("Wmm CG solve failure in GS preconditioner!!!")
+        else:
+            du = spla.spsolve(me.Ju, R3)
+            dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
+            dm = spla.spsolve(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy))
+
+        z[:me.n1]        = du[:]
+        z[me.n1:me.idx0] = dm[:]
+        z[me.idx0:]      = dy[:]
+
+        return z
+    def _matvec(me, b):
+        return me.dot(b)
 
 
 

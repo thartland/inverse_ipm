@@ -14,7 +14,6 @@ class interior_pt:
         problemDefMembers = inspect.getmembers(problemDefs, inspect.isclass)
         problemDefTypes   = [problemDefMembers[i][1] for i in range(len(problemDefMembers))]
         
-
         if type(self.problems) in problemDefTypes:
             # a single problem has been supplied
             self.problem = self.problems
@@ -35,7 +34,7 @@ class interior_pt:
                 self.twoGridHierarchy = twoGridHierarchy(self.problems)
             else:
                 self.multiGridHierarchy = multiGridHierarchy(self.problems)
-        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid", "Enrichedfullmultigrid"]:
+        if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid", "Enrichedfullmultigrid", "GS"]:
             self.residuals = []
 
         # -------- lower-bound constraint
@@ -143,7 +142,6 @@ class interior_pt:
         JkT = Jk.transpose()
        
         if self.sparse_struct:
-            #dHrhorho =  sps.diags(z / (rho - self.rhol))
             dHrhorho = self.problem.Mlumped * sps.diags(z / (rho - self.rhol))
             Ak = sps.bmat([[Hk[:self.n1, :self.n1], Hk[:self.n1, self.n1:], JkT[:self.n1,:]],\
                            [Hk[self.n1:, :self.n1], Hk[self.n1:, self.n1:] + dHrhorho, JkT[self.n1:, :]],\
@@ -161,7 +159,6 @@ class interior_pt:
         """
         By eliminating the bound-constraint multiplier, the rhs of the IP-Newton system is altered by dr
         """
-        #drk    = -mu / (rho - self.rhol)
         drk = -mu * self.problem.Mlumpedvec * (1. / (rho - self.rhol))
         return Ak, Jk, drk
 
@@ -179,10 +176,12 @@ class interior_pt:
                                        self.twoGridHierarchy.R, 1, Spost=self.twoGridHierarchy.Spost)
             elif self.linsolve_strategy == "presmoothing":
                 M = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
+            elif self.linsolve_strategy == "GS":
+                M = GaussSeidel(W, JT, J, self.problem.n1, Mgrid=True) 
             elif self.linsolve_strategy == "prepostsmoothing":
                 S1 = ConstrainedPreSmoother(W, JT, J, self.problem.n1)
                 S2 = ConstrainedPostSmoother(W, JT, J, self.problem.n1)
-                M = CumulativeSmoother(S1, S2, A)
+                M  = CumulativeSmoother(S1, S2, A)
             elif self.linsolve_strategy == "reduced":
                 if self.reducedprecond_strategy == "regularization":
                     M = regularizationSmoother(W[self.problem.n1:, self.problem.n1:] - D)
@@ -212,7 +211,6 @@ class interior_pt:
                 for res in krylov_convergence.residuals:
                     print("res = {0:1.3e}".format(res))
                 raise RuntimeError("linear solve failure!")
-
             else:
                 self.residuals.append(krylov_convergence.residuals)
         else:
@@ -221,18 +219,22 @@ class interior_pt:
     """ 
     determine the solution
     of the perturbed KKT conditions
-    no inertia-correction!
     """
     def pKKT_solve(self, X, mu, soc=False):
         if not soc:
             print("-"*50+" determining search direction ")
-        x, lam, z = self.split(X)
+        # ---- split current solution estimate
+        x, lam, z  = self.split(X)
         u          = x[:self.n1]
         rho        = x[self.n1:]
-        dHrhorho = self.problem.Mm.dot(sps.diags(z / (rho - self.rhol)))
-        xhat      = np.zeros(self.n)
-        lamhat    = np.zeros(self.m)
-        zhat      = np.zeros(self.n2)
+
+        # ---- solution estimate updates
+        xhat       = np.zeros(self.n)
+        lamhat     = np.zeros(self.m)
+        zhat       = np.zeros(self.n2)
+
+        # ---- pertubartion to the KKT system upon eliminating variable bound-constraint multiplier
+        dHrhorho    = sps.diags(self.problem.Mlumpedvec * z / (rho-self.rhol))
 
         Ak, Jk, drk = self.formH(X, mu)
         JkT = Jk.transpose()
@@ -255,9 +257,6 @@ class interior_pt:
         
         sol = self.linsolve(Ak, -rk, D=dHrhorho)
                 
-        """
-        Here is where the inertia-correcting scheme will begin
-        """
         xhat[:]   = sol[:self.n]
         lamhat[:] = sol[self.n:]
         lamplus   = (lamhat + lam)
@@ -268,14 +267,14 @@ class interior_pt:
             zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))
             return xhat, lamhat, zhat
 
-
+        # ---- inertia-free inertia-correction scheme
         Wk      = Ak[:self.idx1, :self.idx1]
 
         if np.inner(xhat, Wk.dot(xhat)) + max(0, -1.*np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
             zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
             self.deltalast = 0.
             print("NO INERTIA CORRECTION WAS REQUIRED")
-            return xhat.copy(), lamhat.copy(), zhat.copy()
+            return xhat, lamhat, zhat
         else:
             print("INERTIA CORRECTION REQUIRED")
             if self.deltalast == 0.:
@@ -286,7 +285,7 @@ class interior_pt:
             while j_ic < self.max_ic:
                 if self.sparse_struct:
                     Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * sps.identity(self.idx1), Ak[:self.idx1, self.idx1:]],\
-                                    [Ak[self.idx1:, :self.idx1], None]], format="csr")
+                                        [Ak[self.idx1:, :self.idx1], None]], format="csr")
                 else:
                     Akdelta = np.zeros((self.idx2, self.idx2))
                     Akdelta[:,:] = Ak[:,:]

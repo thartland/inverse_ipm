@@ -17,7 +17,7 @@ and set up the linear KKT system.
 """
 
 class inverseDiffusion:
-    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, ud, g, rhol, B=None, noise_lvl=1.0):
+    def __init__(me, Vh, Vh1, Vh2, beta, gamma1, gamma2, d, g, rhol, B=None, noise_lvl=1.0):
         me.sparse_struct = True
         me.Vh    = Vh
         me.Vh1   = Vh1
@@ -32,7 +32,7 @@ class inverseDiffusion:
         me.m     = me.n1
 
         # data that we are fitting the model to
-        me.ud    = ud
+        me.d    = d
 
         # rhs
         me.g = g
@@ -78,13 +78,13 @@ class inverseDiffusion:
     objective -- return the value of the regularized data-misfit functional at x
     """
     def f(me, x):
-        d = me.ud.vector()[:]
+        #d = me.ud.vector()[:]
         u   = x[:me.n1]
         rho = x[me.n1:]
         if me.sparse_obs:
-            return 0.5 *np.inner(me.B.dot(u - d), me.B.dot(u- d)) / (me.sig**2.) + 0.5 * np.inner(rho, me.R.dot(rho))
+            return 0.5 *np.inner(me.B.dot(u) - me.d, me.B.dot(u)- me.d) / (me.sig**2.) + 0.5 * np.inner(rho, me.R.dot(rho))
         else:
-            return 0.5 * np.inner(u - d, me.Mu.dot(u-d)) + 0.5 * np.inner(rho, me.R.dot(rho))
+            return 0.5 * np.inner(u - me.d, me.Mu.dot(u-me.d)) + 0.5 * np.inner(rho, me.R.dot(rho))
 
     """
     gradient -- return the variational derivative of J with respect to x
@@ -92,11 +92,11 @@ class inverseDiffusion:
     def Dxf(me, x):
         u   = x[:me.n1]
         rho = x[me.n1:]
-        d   = me.ud.vector()[:]
+        #d   = me.ud.vector()[:]
         if me.sparse_obs:
-            return np.concatenate([me.BT.dot(me.B.dot(u-d)) / me.sig**2., me.R.dot(rho)])
+            return np.concatenate([me.BT.dot(me.B.dot(u)-me.d) / me.sig**2., me.R.dot(rho)])
         else:
-            return np.concatenate([me.Mu.dot(u-d), me.R.dot(rho)])
+            return np.concatenate([me.Mu.dot(u-me.d), me.R.dot(rho)])
     """
     return the second variational derivative of J with respect to x, that is
     a linear mapping from primal to dual
