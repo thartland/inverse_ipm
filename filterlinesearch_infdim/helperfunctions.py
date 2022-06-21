@@ -804,11 +804,11 @@ class GaussSeidel(spla.LinearOperator):
         me.Mgrid = Mgrid
         
         if me.Mgrid:
-            mlWmm    = pyamg.ruge_stuben_solver(me.Wmm)
+            mlWmm    = pyamg.smoothed_aggregation_solver(me.Wmm)
             me.MWmm  = mlWmm.aspreconditioner(cycle='V')
-            mlJu     = pyamg.ruge_stuben_solver(me.Ju)
+            mlJu     = pyamg.smoothed_aggregation_solver(me.Ju)
             me.MJu   = mlJu.aspreconditioner(cycle='V')
-            mlJuT    = pyamg.ruge_stuben_solver(me.JuT)
+            mlJuT    = pyamg.smoothed_aggregation_solver(me.JuT)
             me.MJuT  = mlJuT.aspreconditioner(cycle='V')
             
 
@@ -822,15 +822,20 @@ class GaussSeidel(spla.LinearOperator):
         
         if me.Mgrid:
             krylov_convergence = Krylov_convergence(me.Ju, R3, residual_callback=False)
-            du, info = spla.cg(me.Ju, R3, tol=1.e-13, maxiter=100, M = me.MJu, callback=krylov_convergence.callback)
-            if info > 0:
+            du, exitCode = spla.cg(me.Ju, R3, tol=1.e-13, atol=1.e-13, maxiter=100, M = me.MJu, callback=krylov_convergence.callback)
+            if exitCode > 0:
                 print("Ju CG solve failure in GS preconditioner!!!")
-            dy, info = spla.cg(me.JuT, R1 - me.Wuu.dot(du), tol=1.e-13, maxiter=100, M=me.MJuT)
-            if info > 0:
+                print("exit code = {0:d}".format(exitCode))
+            #print(np.linalg.norm(R1 - me.Wuu.dot(du)))
+            dy, exitCode = spla.cg(me.JuT, R1 - me.Wuu.dot(du), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MJuT)
+            #dy, exitCode = spla.cg(me.Ju, R1 - me.Wuu.dot(du), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MJu)
+            if exitCode > 0:
                 print("Ju^T CG solve failure in GS preconditioner!!!")
-            dm, info = spla.cg(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy), tol=1.e-13, maxiter=100, M=me.MWmm)
-            if info > 0:
+                print("exit code = {0:d}".format(exitCode))
+            dm, exitCode = spla.cg(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MWmm)
+            if exitCode > 0:
                 print("Wmm CG solve failure in GS preconditioner!!!")
+                print("exit code = {0:d}".format(exitCode))
         else:
             du = spla.spsolve(me.Ju, R3)
             dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
