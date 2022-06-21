@@ -25,8 +25,8 @@ protected:
 	ParBilinearForm *Mwform;
 	SparseMatrix *Mw;
         DiscreteLinearOperator *Grad;
-	ParMixedBilinearForm *MmL2form;
-	SparseMatrix *MmL2;
+	ParMixedBilinearForm *ML2mform;
+	SparseMatrix *ML2m;
 	
 	/*MixedBilinearForm *Cform;
         SparseMatrix  *C;
@@ -71,6 +71,7 @@ public:
 	void Dxxf(BlockVector &, BlockOperator* );
 	void c(BlockVector &, Vector *);
 	void Dxc(BlockVector &, BlockOperator* );
+	void DxcTp(BlockVector& , Vector &, BlockVector *);
 	void Dxxcp(BlockVector &, Vector &, BlockOperator *);
 	double phi(BlockVector &, double);
 	void Dxphi(BlockVector &, double, BlockVector *);

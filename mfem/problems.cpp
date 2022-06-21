@@ -127,10 +127,10 @@ inverseDiffusion::inverseDiffusion(
   Grad->SetAssemblyLevel(AssemblyLevel::PARTIAL);
   Grad->Assemble();
 
-  MmL2form = new ParMixedBilinearForm(VhL2, Vhm);
-  MmL2form->AddDomainIntegrator(new MassIntegrator);
-  MmL2form->Assemble();
-  MmL2 = &(MmL2form->SpMat());
+  ML2mform = new ParMixedBilinearForm(VhL2, Vhm);
+  ML2mform->AddDomainIntegrator(new MassIntegrator);
+  ML2mform->Assemble();
+  ML2m = &(ML2mform->SpMat());
 
 
  
@@ -268,7 +268,7 @@ void inverseDiffusion::Dxc(BlockVector& x, BlockOperator* y)
   y->SetBlock(0, 1, Jm);
 }
 
-/*void inverseDiffusion::DxcTp(BlockVector& x, Vector &p, BlockVector *y)
+void inverseDiffusion::DxcTp(BlockVector& x, Vector &p, BlockVector *y)
 {
   Vector u = x.GetBlock(0);
   Vector m = x.GetBlock(1);
@@ -276,20 +276,39 @@ void inverseDiffusion::Dxc(BlockVector& x, BlockOperator* y)
   m_gf = m;
   GridFunctionCoefficient m_gfc(&m_gf);
 
-  ParBilinearForm * Ducform(new ParBilinearForm(Vhu));
-  Ducform->AddDomainIntegrator(new DiffusionIntegrator(m_gfc));
-  Ducform->AddDomainIntegrator(new MassIntegrator(*beta));
-  Ducform->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-  Ducform->Assemble();
+  ParBilinearForm * cuform(new ParBilinearForm(Vhu));
+  cuform->AddDomainIntegrator(new DiffusionIntegrator(m_gfc));
+  cuform->AddDomainIntegrator(new MassIntegrator(*beta));
+  cuform->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+  cuform->Assemble();
   
   Vector yu(u.Size());
   Vector ym(m.Size());
   y->GetBlockView(0, yu);
   y->GetBlockView(1, ym);
-  Ducform->Mult(p, yu);
-  y->SetBlock(0, 0, Ducform);
+  cuform->Mult(p, yu);
+
+  GridFunction * pgrad = new GridFunction(Vhgrad);
+  GridFunction * ugrad = new GridFunction(Vhgrad);
+  Grad->Mult(p, *pgrad); 
+  Grad->Mult(u, *ugrad);
+  VectorGridFunctionCoefficient pgrad_gfc(pgrad);
+
+
+
+  DiscreteLinearOperator * Inner = new DiscreteLinearOperator(Vhgrad, VhL2);
+  Inner->AddDomainInterpolator(new VectorInnerProductInterpolator(pgrad_gfc));
+  Inner->Assemble();
+  Inner->Finalize();
+
+  GridFunction * ugradTpgrad = new GridFunction(VhL2);
+  Inner->Mult(*ugrad, *ugradTpgrad);
+
+  ML2m->Mult(*ugradTpgrad, ym);
+
+  //y->SetBlock(0, 0, Ducform);
   
-  ParGridFunction * ugrad = new ParGridFunction(Vhgrad);
+  /*ParGridFunction * ugrad = new ParGridFunction(Vhgrad);
   ParGridFunction * pgrad = new ParGridFunction(Vhgrad);
   Grad->Mult(u, *ugrad); 
   Grad->Mult(p, *pgrad);
@@ -303,8 +322,8 @@ void inverseDiffusion::Dxc(BlockVector& x, BlockOperator* y)
   Dmcform->Assemble(skip_zeros);
   SparseMatrix *Jm;
   Jm = &(Dmcform->SpMat());
-  y->SetBlock(0, 1, Jm);
-}*/
+  y->SetBlock(0, 1, Jm);*/
+}
 
 
 void inverseDiffusion::Dxxcp(BlockVector& x, Vector &p, BlockOperator* y)
