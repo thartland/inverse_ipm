@@ -802,6 +802,8 @@ class GaussSeidel(spla.LinearOperator):
         me.JmT = me.Jm.transpose()
         
         me.Mgrid = Mgrid
+
+        me.WmmAMGcycles = []
         
         if me.Mgrid:
             mlWmm    = pyamg.smoothed_aggregation_solver(me.Wmm)
@@ -826,16 +828,20 @@ class GaussSeidel(spla.LinearOperator):
             if exitCode > 0:
                 print("Ju CG solve failure in GS preconditioner!!!")
                 print("exit code = {0:d}".format(exitCode))
-            #print(np.linalg.norm(R1 - me.Wuu.dot(du)))
-            dy, exitCode = spla.cg(me.JuT, R1 - me.Wuu.dot(du), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MJuT)
-            #dy, exitCode = spla.cg(me.Ju, R1 - me.Wuu.dot(du), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MJu)
+            bJuT = R1 - me.Wuu.dot(du)
+            dy, exitCode = spla.cg(me.JuT, bJuT, tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MJuT)
             if exitCode > 0:
                 print("Ju^T CG solve failure in GS preconditioner!!!")
                 print("exit code = {0:d}".format(exitCode))
-            dm, exitCode = spla.cg(me.Wmm, R2 - me.Wmu.dot(du) - me.JmT.dot(dy), tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MWmm)
+                print("||residual|| = {0:1.3e}".format(np.linalg.norm(bJuT - me.JuT.dot(dy))))
+            bWmm  = R2 - me.Wmu.dot(du) - me.JmT.dot(dy)
+            krylov_convergenceWmm = Krylov_convergence(me.Wmm, bWmm, residual_callback=False)
+            dm, exitCode = spla.cg(me.Wmm, bWmm, tol=1.e-13, atol=1.e-13, maxiter=100, M=me.MWmm, callback=krylov_convergenceWmm.callback)
             if exitCode > 0:
                 print("Wmm CG solve failure in GS preconditioner!!!")
                 print("exit code = {0:d}".format(exitCode))
+            me.WmmAMGcycles.append(len(krylov_convergenceWmm.residuals))
+
         else:
             du = spla.spsolve(me.Ju, R3)
             dy = spla.spsolve(me.JuT, R1 - me.Wuu.dot(du))
