@@ -40,7 +40,7 @@ class interior_pt:
         if linsolve_strategy in ["multigrid", "presmoothing", "prepostsmoothing", "reduced", "fullmultigrid", "Enrichedfullmultigrid", "GS"]:
             self.residuals = []
         if linsolve_strategy == "GS":
-            self.WrhorhoAMGcycles = []
+            self.WmmAMGcycles = []
 
         # -------- lower-bound constraint
         self.rhol = problem.rhol
@@ -212,7 +212,7 @@ class interior_pt:
                 sol, info = spla.gmres(A, b, tol=lintol, atol=lintol, \
                                        M = M, maxiter=maxiter, callback=krylov_convergence.callback)
                 if self.linsolve_strategy == "GS":
-                    self.WrhorhoAMGcycles.append([M.WrhorhoAMGcycles, len(krylov_convergence.residuals)])
+                    self.WmmAMGcycles.append([M.WmmAMGcycles, len(krylov_convergence.residuals)])
             if not info == 0:
                 print("||b|| = {0:1.3e}".format(np.linalg.norm(b)))
                 for res in krylov_convergence.residuals:
