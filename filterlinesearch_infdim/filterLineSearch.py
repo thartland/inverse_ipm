@@ -8,8 +8,11 @@ import problems as problemDefs
 from pyamg.krylov import gmres
 
 class interior_pt:
-    def __init__(self, problems, linsolve_strategy, reducedprecond_strategy="regularization"):
+    def __init__(self, problems, linsolve_strategy, outerlin_tol=1.e-12, outerlin_maxiter = 300, reducedprecond_strategy="regularization"):
         self.problems = problems
+
+        self.outerlin_tol = outerlin_tol
+        self.outerlin_maxiter = outerlin_maxiter
 
         problemDefMembers = inspect.getmembers(problemDefs, inspect.isclass)
         problemDefTypes   = [problemDefMembers[i][1] for i in range(len(problemDefMembers))]
@@ -166,8 +169,8 @@ class interior_pt:
 
     def linsolve(self, A, b, mu=None, D=None):
         if self.sparse_struct:
-            lintol  = 1.e-12
-            maxiter = 300
+            lintol  = self.outerlin_tol
+            maxiter = self.outerlin_maxiter
             W  = A[:self.n, :self.n]
             JT = A[:self.n, self.n:]
             J  = A[self.n:, :self.n]
