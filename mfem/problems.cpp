@@ -294,8 +294,6 @@ void inverseDiffusion::DxcTp(BlockVector& x, Vector &p, BlockVector *y)
   Grad->Mult(u, *ugrad);
   VectorGridFunctionCoefficient pgrad_gfc(pgrad);
 
-
-
   DiscreteLinearOperator * Inner = new DiscreteLinearOperator(Vhgrad, VhL2);
   Inner->AddDomainInterpolator(new VectorInnerProductInterpolator(pgrad_gfc));
   Inner->Assemble();
@@ -305,24 +303,6 @@ void inverseDiffusion::DxcTp(BlockVector& x, Vector &p, BlockVector *y)
   Inner->Mult(*ugrad, *ugradTpgrad);
 
   ML2m->Mult(*ugradTpgrad, ym);
-
-  //y->SetBlock(0, 0, Ducform);
-  
-  /*ParGridFunction * ugrad = new ParGridFunction(Vhgrad);
-  ParGridFunction * pgrad = new ParGridFunction(Vhgrad);
-  Grad->Mult(u, *ugrad); 
-  Grad->Mult(p, *pgrad);
-  VectorGridFunctionCoefficient ugrad_gfc(ugrad);
-
-  ParBilinearForm * Dmcform(new ParBilinearForm(Vhu));
-  constexpr double alpha = 1.0;
-  int skip_zeros = 0;
-  Dmcform->AddDomainIntegrator(new ConvectionIntegrator(ugrad_gfc, alpha));
-  //Dmcform->SetAssemblyLevel(AssemblyLevel::ELEMENT);
-  Dmcform->Assemble(skip_zeros);
-  SparseMatrix *Jm;
-  Jm = &(Dmcform->SpMat());
-  y->SetBlock(0, 1, Jm);*/
 }
 
 
@@ -341,21 +321,15 @@ void inverseDiffusion::Dxxcp(BlockVector& x, Vector &p, BlockOperator* y)
   constexpr double alpha = 1.0;
   int skip_zeros = 0;
 
-  ParBilinearForm * Dumcform(new ParBilinearForm(Vhu));
-  Dumcform->AddDomainIntegrator(new ConvectionIntegrator(pgrad_gfc, alpha));
-  //Dmcform->SetAssemblyLevel(AssemblyLevel::ELEMENT);
-  Dumcform->Assemble(skip_zeros);
-  SparseMatrix *Jum;
-  Jum = &(Dumcform->SpMat());
-  y->SetBlock(0, 1, Jum);
-  
   ParBilinearForm * Dmucform(new ParBilinearForm(Vhu));
   Dmucform->AddDomainIntegrator(new ConvectionIntegrator(pgrad_gfc, alpha));
-  //Dmcform->SetAssemblyLevel(AssemblyLevel::ELEMENT);
   Dmucform->Assemble(skip_zeros);
+  Dmucform->Finalize();
   SparseMatrix *Jmu;
   Jmu = &(Dmucform->SpMat());
   y->SetBlock(1, 0, Jmu);
+  SparseMatrix *Jum = Transpose(*Jmu);
+  y->SetBlock(0, 1, Jum);
 }
 
 double inverseDiffusion::phi(BlockVector &x, double mu)
