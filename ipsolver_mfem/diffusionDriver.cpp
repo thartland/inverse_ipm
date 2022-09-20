@@ -136,11 +136,14 @@ int main(int argc, char *argv[])
   const Operator * Pm = Vhm->GetProlongationMatrix();  
 
 
+  HYPRE_BigInt dimUGlobal = Vhu->GlobalTrueVSize();
+  HYPRE_BigInt dimMGlobal = Vhm->GlobalTrueVSize();
   if(iAmRoot)
+
   {
-    cout << "dim(state) = " << Vhu->GetTrueVSize() << endl;
-    cout << "dim(parameter) = " << Vhm->GetTrueVSize() << endl;
-    cout << "my order = " << Vhu->GetOrder(0) << endl;
+    cout << "dim(state) = "     << dimUGlobal << endl;
+    cout << "dim(parameter) = " << dimMGlobal << endl;
+    cout << "my order = "       << Vhu->GetOrder(0) << endl;
   }
    
   // Determine the list of true (i.e. conforming) essential boundary dofs.
