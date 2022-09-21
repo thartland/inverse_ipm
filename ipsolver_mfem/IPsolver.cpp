@@ -414,7 +414,7 @@ void interiorPtSolver::pKKTSolve(BlockVector &x, Vector &l, Vector &zl, Vector &
   IPNewtonSysFormStopWatch.Stop();
   if(iAmRoot)
   {
-    IPNewtonSysFormTimes << setprecision(30) << IPNewtonSolveStopWatch.RealTime() << endl;
+    IPNewtonSysFormTimes << setprecision(30) << IPNewtonSysFormStopWatch.RealTime() << endl;
   }
 
 
