@@ -195,7 +195,8 @@ DiagonalOperator::~DiagonalOperator()
 
 
 
-GSPreconditioner::GSPreconditioner(BlockOperator *A, double tol) : Solver(A->Height()) 
+GSPreconditioner::GSPreconditioner(BlockOperator *A, double tol, 
+                  string A02sTimeFile, string A11sTimeFile) : Solver(A->Height()) 
 {
   Abo          = A;
   col_offsets  = A->ColOffsets();
@@ -247,6 +248,9 @@ GSPreconditioner::GSPreconditioner(BlockOperator *A, double tol) : Solver(A->Hei
   A11solver->SetPrintLevel(solverPrintLevel);
   A11solver->SetPreconditioner(*A11prec);
   A11solver->SetOperator(*A11);
+
+  A02SolveTimeDataStream.open(A02sTimeFile, ios::out | ios::trunc);
+  A11SolveTimeDataStream.open(A11sTimeFile, ios::out | ios::trunc);
 }
 
 void GSPreconditioner::Mult(const Vector & x, Vector & y) const
@@ -267,7 +271,15 @@ void GSPreconditioner::Mult(const Vector & x, Vector & y) const
   yblock.Update(y, row_offsets);
 
   r2.Set(1.0, xblock.GetBlock(2));
+  blockSolveStopWatch.Clear();
+  blockSolveStopWatch.Start();
   A20solver->Mult(r2, tmp0);
+  blockSolveStopWatch.Stop();
+  if(Mpi::Root())
+  {
+    A02SolveTimeDataStream << setprecision(30) << blockSolveStopWatch.RealTime() << endl;
+  }
+
   A20solver->GetNumIterations(numits);
   A20applies.Append(numits);
   yblock.GetBlock(0).Set(1.0, tmp0);
@@ -286,7 +298,16 @@ void GSPreconditioner::Mult(const Vector & x, Vector & y) const
   r1.Add(-1.0, tmp1);
   (Abo->GetBlock(1, 2)).Mult(yblock.GetBlock(2), tmp1);
   r1.Add(-1.0, tmp1);
+  blockSolveStopWatch.Clear();
+  blockSolveStopWatch.Start();
   A11solver->Mult(r1, tmp1);
+  blockSolveStopWatch.Stop();
+  
+  if(Mpi::Root())
+  {
+    A11SolveTimeDataStream << setprecision(30) << blockSolveStopWatch.RealTime() << endl;
+  }
+
   A11solver->GetNumIterations(numits);
   A11applies.Append(numits);
   yblock.GetBlock(1).Set(1.0, tmp1);
@@ -344,20 +365,13 @@ void GSPreconditioner::saveA20applies(string saveFile)
   }
 }
 
-
-
-
-
-
-
-
-
-
 GSPreconditioner::~GSPreconditioner()
 {
 /* WARNING! do not delete A02, A20, A11 as they point to the physical memory location as
  * as that of the blocks of A
  */
+ A02SolveTimeDataStream.close();
+ A11SolveTimeDataStream.close();
  delete A20prec;
  delete A20solver;
  /*delete A02prec;

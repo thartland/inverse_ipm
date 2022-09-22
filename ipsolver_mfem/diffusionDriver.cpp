@@ -411,6 +411,8 @@ int main(int argc, char *argv[])
     timerDataStream.close();
   }
 
+  cout << MFEM_TIMER_TYPE << endl;
+
 
   delete Vhu;
   delete Vhm;

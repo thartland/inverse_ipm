@@ -109,9 +109,11 @@ private:
   mutable Array<int> A11applies;
   mutable Array<int> A02applies;
   BlockOperator * Abo;
+  mutable std::ofstream A02SolveTimeDataStream;
+  mutable std::ofstream A11SolveTimeDataStream;
+  mutable StopWatch blockSolveStopWatch;
 public:
-
-  GSPreconditioner(BlockOperator *, double);
+  GSPreconditioner(BlockOperator *, double, string, string);
   void Mult(const Vector &, Vector &) const;
   void SetOperator(const Operator &);
   void saveA20applies(string);

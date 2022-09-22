@@ -419,10 +419,12 @@ void interiorPtSolver::pKKTSolve(BlockVector &x, Vector &l, Vector &zl, Vector &
 
 
   string saveFile = "GMRESdata/res" + to_string(jOpt) + ".dat";
+  string A02solveTimeSaveFile = "GMRESdata/A02solvetimes" + to_string(jOpt) + ".dat";
+  string A11solveTimeSaveFile = "GMRESdata/A11solvetimes" + to_string(jOpt) + ".dat";
   SaveDataSolverMonitor mymonitor(saveFile);
   GMRESSolver Asolver(MyComm);
   double precTol = 1.e-13;
-  GSPreconditioner Aprec(&A, precTol);
+  GSPreconditioner Aprec(&A, precTol, A02solveTimeSaveFile, A11solveTimeSaveFile);
   Asolver.SetOperator(A);
   Asolver.SetPreconditioner(Aprec);
   Asolver.SetRelTol(1.e-10);
