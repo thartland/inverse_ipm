@@ -442,7 +442,7 @@ double mFun(const Vector &x)
 
 double mlFun(const Vector &x)
 {
-  return 0.75;
+  return 1.0;
 }
 
 double uFun(const Vector &x)
@@ -452,7 +452,36 @@ double uFun(const Vector &x)
 
 double gFun(const Vector &x)
 {
-  double val = 0.0;
+  double val1 = 0.5;
+  for(int i = 0; i < x.Size(); i++)
+  {
+    val1 += x(i);
+  }
+  val1 *= x.Size() * pow(M_PI, 2);
+  val1 += 1.0;  
+  for(int i = 0; i < x.Size(); i++)
+  {
+    val1 *= cos(M_PI * x(i));
+  }
+  double val2;
+  for(int i = 0; i < x.Size(); i++)
+  {
+    val2 = 1.0;
+    for(int j = 0; j < x.Size(); j++)
+    {
+      if(i == j)
+      {
+        val2 *= sin(M_PI * x(j));
+      }
+      else
+      {
+        val2 *= cos(M_PI*x(i));
+      }
+    }
+    val1 += M_PI * val2;
+  }
+  return val1;  
+  /*double val = 0.0;
   for(int i = 0; i < x.Size(); i++)
   {
     val += pow(M_PI, 2);
@@ -470,7 +499,7 @@ double gFun(const Vector &x)
     val1 *= cos(M_PI * x(i));
   }
   val -= val1;
-  return val;
+  return val;*/
 }
 
 double dFun(const Vector &x)
@@ -490,7 +519,12 @@ double pFun(const Vector &x)
 
 double mTrueFun(const Vector &x)
 {
-  return 0.5 + x(0);
+  double val = 0.5;
+  for(int i = 0; i < x.Size(); i++)
+  {
+    val += x(i);
+  }
+  return val;
 }
 
 
