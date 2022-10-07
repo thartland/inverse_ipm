@@ -251,6 +251,10 @@ double optimizationProblem::E(BlockVector &x, Vector &l, Vector &zl, double mu, 
   w2.Add(-1.0, ml);
   w2 *= zl;
   w2 -= mu;
+  for(int i = 0; i < dimM; i++)
+  {
+    w2(i) = abs(w2(i));
+  }
   double E3 = InnerProduct(MyComm, w2, Mmlumped);
   
   Mu.Mult(l, z1);
