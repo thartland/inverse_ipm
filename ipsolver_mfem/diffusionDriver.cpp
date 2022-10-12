@@ -271,7 +271,7 @@ int main(int argc, char *argv[])
     cout << "d(" << i << ") = " << d1_gf(i) << " (rank " << rank << ")\n";
     }
   }*/
-  noise *= noise_lvl/d1_gf.Norml2();
+  noise *= noise_lvl*InnerProduct(MPI_COMM_WORLD, d1_gf, d1_gf);//d1_gf.Norml2();
   d1_gf += noise;
   /*for(int i = 0; i < 4; i++)
   {
