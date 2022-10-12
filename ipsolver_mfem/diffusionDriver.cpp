@@ -31,6 +31,7 @@ int main(int argc, char *argv[])
 	
 
   int ref_levels = 1;
+  int ser_ref_levels =1 ;
   int order = 1;
   int orderm = 1;
   int gdim = 2;
@@ -38,8 +39,10 @@ int main(int argc, char *argv[])
 
   const char *device_config = "cpu";
   OptionsParser args(argc, argv);
-  args.AddOption(&ref_levels, "-r", "--refine",\
-		  "Number of times to refine the mesh uniformly.");
+  args.AddOption(&ser_ref_levels, "-sr", "--serialrefine",\
+		  "Number of times to refine the serial mesh uniformly.");
+  args.AddOption(&ref_levels, "-r", "--parallelrefine",\
+		  "Number of times to refine the parallel mesh uniformly.");
   args.AddOption(&order, "-o", "--order",\
 		  "Order (degree) of the finite elements (state).");
   args.AddOption(&orderm, "-om", "--orderm",\
@@ -89,6 +92,13 @@ int main(int argc, char *argv[])
   int ncomp             = 1;
   int dim = serial_mesh->Dimension(); // geometric dimension
   
+  // refine the mesh up to a certain number of dofs
+  for(int lev = 0; lev < ser_ref_levels; lev++)
+  {
+    serial_mesh->UniformRefinement();
+  }
+
+
   ParMesh *mesh = new ParMesh(MPI_COMM_WORLD, *serial_mesh);
   // Mesh bounding box (for the full serial mesh).
   Vector pos_min, pos_max;
@@ -205,7 +215,7 @@ int main(int argc, char *argv[])
     {
       interpolationPoints(i + j*pts_cnt) = (serial_mesh_simple->GetVertex(i))[j];
     }
-    if(iAmRoot)
+    /*if(iAmRoot)
     {
       switch(dim)
       {
@@ -220,7 +230,7 @@ int main(int argc, char *argv[])
                                   << interpolationPoints(i + 2*pts_cnt) << ")\n";
           break;
       }
-    }
+    }*/
   }
   
   // Find and Interpolate FE function values on the desired points.
@@ -250,22 +260,22 @@ int main(int argc, char *argv[])
   // but how to do Gaussian sampling...
   int seed = 1;
   noise.Randomize(seed);
-  for(int i = 0; i < 4; i++)
+  /*for(int i = 0; i < 4; i++)
   {
     if(iAmRoot)
     {
     cout << "d(" << i << ") = " << d1_gf(i) << " (rank " << rank << ")\n";
     }
-  }
+  }*/
   noise *= noise_lvl/d1_gf.Norml2();
   d1_gf += noise;
-  for(int i = 0; i < 4; i++)
+  /*for(int i = 0; i < 4; i++)
   {
     if(iAmRoot)
     {
     cout << "d(" << i << ") = " << d1_gf(i) << " (rank " << rank << ")\n";
     }
-  }
+  }*/
 
 
   
@@ -340,6 +350,20 @@ int main(int argc, char *argv[])
 
   int dimU = problem.getdimU();
   int dimM = problem.getdimM();
+  int dimUmaxGlb, dimUminGlb, dimMmaxGlb, dimMminGlb; //max and min local dofs over each MPI process 
+  /* the following is bad practice, generally one should reduce the total number of Allreduce's in favor of sending larger messages */ 
+  MPI_Allreduce(&dimU, &dimUmaxGlb, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  MPI_Allreduce(&dimU, &dimUminGlb, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  MPI_Allreduce(&dimM, &dimMmaxGlb, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  MPI_Allreduce(&dimM, &dimMminGlb, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if(iAmRoot)
+  {
+    cout << "checking for potential load imbalance issues due to mesh partioning" << endl;
+    cout << "max local dim(state) = "     << dimUmaxGlb << endl;
+    cout << "min local dim(state) = "     << dimUminGlb << endl;
+    cout << "max local dim(parameter) = " << dimMmaxGlb << endl;
+    cout << "min local dim(parameter) = " << dimMminGlb << endl;
+  }
 
   
   Array<int> block_offsetsx(3); // number of variables + 1
@@ -404,9 +428,8 @@ int main(int argc, char *argv[])
     timerDataStream.open("optTime.dat", ios::out | ios::trunc);
     timerDataStream << setprecision(30) << optStopWatch.RealTime() << endl;
     timerDataStream.close();
+    cout << "MFEM_TIMER_TYPE = " << MFEM_TIMER_TYPE << endl;
   }
-
-  cout << MFEM_TIMER_TYPE << endl;
 
 
   delete Vhu;
