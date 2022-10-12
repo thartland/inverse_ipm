@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
   mesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
   double sigma;
   //sigma = 2. * h_min; // width of Gaussian supports for the Dirac comb used to define observation operator
-  sigma = 0.1;
+  sigma = 0.075;
 
 
 
@@ -139,7 +139,6 @@ int main(int argc, char *argv[])
   HYPRE_BigInt dimUGlobal = Vhu->GlobalTrueVSize();
   HYPRE_BigInt dimMGlobal = Vhm->GlobalTrueVSize();
   if(iAmRoot)
-
   {
     cout << "dim(state) = "     << dimUGlobal << endl;
     cout << "dim(parameter) = " << dimMGlobal << endl;
@@ -392,7 +391,7 @@ int main(int argc, char *argv[])
   X0opt.GetBlock(1).Set(1.0, x.GetBlock(1));
   X0opt.GetBlock(2).Set(1.0, l);
 
-  double tolOpt = 1.e-8;
+  double tolOpt = 1.e-6;
   int maxOptIt = 75;
   double mu0 = 1.0;
 
