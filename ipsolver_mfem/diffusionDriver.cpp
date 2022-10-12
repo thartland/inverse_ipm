@@ -340,10 +340,6 @@ int main(int argc, char *argv[])
 
   int dimU = problem.getdimU();
   int dimM = problem.getdimM();
-  cout << "dim(state) = " << dimU << "on process " << rank << endl;
-  cout << "dim(parameter) = " << dimM << "on process " << rank << endl;
-
-
 
   
   Array<int> block_offsetsx(3); // number of variables + 1
