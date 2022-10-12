@@ -153,6 +153,10 @@ int main(int argc, char *argv[])
     cout << "dim(state) = "     << dimUGlobal << endl;
     cout << "dim(parameter) = " << dimMGlobal << endl;
     cout << "my order = "       << Vhu->GetOrder(0) << endl;
+    std::ofstream problemDimStream;
+    problemDimStream.open("problemDim.dat", ios::out | ios::trunc);
+    problemDimStream << setprecision(30) << dimUGlobal << endl;
+    problemDimStream.close();
   }
    
   // Determine the list of true (i.e. conforming) essential boundary dofs.
