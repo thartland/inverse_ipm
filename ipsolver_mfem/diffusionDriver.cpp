@@ -308,7 +308,7 @@ int main(int argc, char *argv[])
   ParGridFunction w_gf(Vhu);
   w_gf.ProjectCoefficient(w_fc);
   
-  if(output_VKT==1)
+  if(outputVTK==1)
   {
     ParaViewDataCollection paraview_dc("DiracWeightFunction", mesh);
     paraview_dc.SetPrefixPath("ParaView");
