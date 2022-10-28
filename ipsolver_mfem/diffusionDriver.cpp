@@ -75,7 +75,7 @@ int main(int argc, char *argv[])
   if(gdim == 2)
   {
     mFile       = mFile       + "quad.mesh";
-    mFileSimple = mFileSimple + "quad-coarse.mesh";
+    mFileSimple = mFileSimple + "quad.mesh";
   }
   else
   {
@@ -87,7 +87,7 @@ int main(int argc, char *argv[])
   const char *simple_mesh_file = mFileSimple.data();
   Mesh *serial_mesh = new Mesh(mesh_file, 1, 1);
   Mesh *serial_mesh_simple = new Mesh(simple_mesh_file, 1, 1);
-
+  
   int mesh_poly_deg     = 1;
   int ncomp             = 1;
   int dim = serial_mesh->Dimension(); // geometric dimension
@@ -246,8 +246,7 @@ int main(int argc, char *argv[])
   Array<unsigned int> code_out    = finder.GetCode();
   Array<unsigned int> task_id_out = finder.GetProc();
   Array<unsigned int> mfem_elem   = finder.GetElem();
-  Vector dist_p_out = finder.GetDist();
-  
+  Vector dist_p_out = finder.GetDist(); 
   // Desire    --- corrupt observation data d
   // Challenge --- a global copy of d is on each
   //               MPI process, how to ensure that
@@ -308,18 +307,22 @@ int main(int argc, char *argv[])
   FunctionCoefficient w_fc(wFun);
   ParGridFunction w_gf(Vhu);
   w_gf.ProjectCoefficient(w_fc);
-  ParaViewDataCollection paraview_dc("DiracWeightFunction", mesh);
-  paraview_dc.SetPrefixPath("ParaView");
-  paraview_dc.SetLevelsOfDetail(order);
-  paraview_dc.SetDataFormat(VTKFormat::BINARY);
-  paraview_dc.SetHighOrderOutput(true);
-  paraview_dc.SetCycle(0);
-  paraview_dc.SetTime(0.0);
-  paraview_dc.RegisterField("w", &w_gf);
-  paraview_dc.RegisterField("ud (interpolated)", &ud);
-  paraview_dc.RegisterField("ud", &d_gf);
-  paraview_dc.RegisterField("mtrue", &mtrue_gf);
-  paraview_dc.Save();
+  
+  if(output_VKT==1)
+  {
+    ParaViewDataCollection paraview_dc("DiracWeightFunction", mesh);
+    paraview_dc.SetPrefixPath("ParaView");
+    paraview_dc.SetLevelsOfDetail(order);
+    paraview_dc.SetDataFormat(VTKFormat::BINARY);
+    paraview_dc.SetHighOrderOutput(true);
+    paraview_dc.SetCycle(0);
+    paraview_dc.SetTime(0.0);
+    paraview_dc.RegisterField("w", &w_gf);
+    paraview_dc.RegisterField("ud (interpolated)", &ud);
+    paraview_dc.RegisterField("ud", &d_gf);
+    paraview_dc.RegisterField("mtrue", &mtrue_gf);
+    paraview_dc.Save();
+  }
   
   Device device(device_config);
   if(iAmRoot)
