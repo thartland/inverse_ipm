@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
   mesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
   double sigma;
   //sigma = 2. * h_min; // width of Gaussian supports for the Dirac comb used to define observation operator
-  sigma = 0.075;
+  sigma = 0.1;
 
 
 
@@ -263,6 +263,10 @@ int main(int argc, char *argv[])
   // but how to do Gaussian sampling...
   int seed = 1;
   noise.Randomize(seed);
+  for(int i = 0; i < noise.Size(); i++)
+  {
+    noise(i) = 2.0 * (noise(i) - 0.5) * d1_gf(i);
+  }
   /*for(int i = 0; i < 4; i++)
   {
     if(iAmRoot)
@@ -270,7 +274,7 @@ int main(int argc, char *argv[])
     cout << "d(" << i << ") = " << d1_gf(i) << " (rank " << rank << ")\n";
     }
   }*/
-  noise *= noise_lvl*InnerProduct(MPI_COMM_WORLD, d1_gf, d1_gf);//d1_gf.Norml2();
+  noise *= noise_lvl;
   d1_gf += noise;
   /*for(int i = 0; i < 4; i++)
   {
@@ -412,11 +416,11 @@ int main(int argc, char *argv[])
 
   
 
-  problem.feasibilityRestoration(x, 1.e-12);
+  //problem.feasibilityRestoration(x, 1.e-3);
   BlockVector X0opt(block_offsetsumlz), Xfopt(block_offsetsumlz); X0opt = 100.0; Xfopt = 0.0;
-  X0opt.GetBlock(0).Set(1.0, x.GetBlock(0));
-  X0opt.GetBlock(1).Set(1.0, x.GetBlock(1));
-  X0opt.GetBlock(2).Set(1.0, l);
+  //X0opt.GetBlock(0).Set(1.0, x.GetBlock(0));
+  //X0opt.GetBlock(1).Set(1.0, x.GetBlock(1));
+  //X0opt.GetBlock(2).Set(1.0, l);
 
   double tolOpt = 1.e-6;
   int maxOptIt = 75;
