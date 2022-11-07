@@ -642,6 +642,10 @@ double interiorPtSolver::E(BlockVector &x, Vector &l, Vector &zl, double mu)
   w2.Add(-1.0, ml);
   w2 *= zl;
   w2 -= mu;
+  for(int i=0; i < w2.Size(); i++)
+  {
+    w2(i) = abs(w2(i));
+  }
   E3 = InnerProduct(MyComm, w2, Mmlumped);
   
   Vector z1(dimU); z1 = 0.0;

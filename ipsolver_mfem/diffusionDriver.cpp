@@ -340,7 +340,7 @@ int main(int argc, char *argv[])
   if(gdim == 2)
   {
     gamma1 = 1.e-1;
-    gamma2 = 1.e-2;
+    gamma2 = 1.e-1;
   }
   else
   {
@@ -416,15 +416,15 @@ int main(int argc, char *argv[])
 
   
 
-  //problem.feasibilityRestoration(x, 1.e-3);
-  BlockVector X0opt(block_offsetsumlz), Xfopt(block_offsetsumlz); X0opt = 100.0; Xfopt = 0.0;
-  //X0opt.GetBlock(0).Set(1.0, x.GetBlock(0));
-  //X0opt.GetBlock(1).Set(1.0, x.GetBlock(1));
-  //X0opt.GetBlock(2).Set(1.0, l);
+  problem.feasibilityRestoration(x, 1.e-3);
+  BlockVector X0opt(block_offsetsumlz), Xfopt(block_offsetsumlz); X0opt = 1000.0; Xfopt = 0.0;
+  X0opt.GetBlock(0).Set(1.0, x.GetBlock(0));
+  X0opt.GetBlock(1).Set(1.0, x.GetBlock(1));
+  X0opt.GetBlock(2).Set(1.0, l);
 
   double tolOpt = 1.e-6;
   int maxOptIt = 75;
-  double mu0 = 1.0;
+  double mu0 = 100.0;
 
   StopWatch optStopWatch;
   optStopWatch.Clear();
