@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
+from scipy.linalg import svdvals
+from scipy.linalg import eigvalsh
+
 from pyamg.krylov import cg, bicgstab
 import pyamg
 try:
@@ -1183,6 +1186,14 @@ class reducedHessian(spla.LinearOperator):
         me.r2    = None
         me.r3    = None
         me.regularization = regularization
+
+        me.sigsJuinvJm = None
+        me.eigsGSdatamisfitHessian = None
+        me.eigsnotGSdatamisfitHessian = None
+        me.eigsdatamisfitHessian = None
+        me.eigsWmminvGSdatamisfitHessian = None
+        me.eigsWmminvnotGSdatamisfitHessian = None
+        me.eigsWmminvdatamisfitHessian = None
     def preprhs(me, r):
         me.r1 = r[:me.n1]
         me.r2 = r[me.n1:me.W.shape[0]]
@@ -1197,6 +1208,17 @@ class reducedHessian(spla.LinearOperator):
             return me.Wmu.dot(uhat) + me.Wmm.dot(mhat) + me.JmT.dot(lamhat)
         else:
             return me.Wmu.dot(uhat) + me.JmT.dot(lamhat)
+    def GNdot(me, mhat, misfit_only=False):
+        uhat   = -spla.spsolve(me.Ju, me.Jm.dot(mhat))
+        lamhat = -spla.spsolve(me.JuT, me.Wuu.dot(uhat))
+        if misfit_only:
+            return me.JmT.dot(lamhat)
+        else:
+            return me.Wmm.dot(mhat) + me.JmT.dot(lamhat)
+    def notGNdot(me, mhat):
+        uhat = -spla.spsolve(me.Ju, me.Jm.dot(mhat))
+        lamhat = -spla.spsolve(me.JuT, me.Wum.dot(mhat))
+        return -(me.JmT.dot(lamhat) + me.Wmu.dot(uhat))
 
     def _matvec(me, x):
         return me.dot(x)
@@ -1206,6 +1228,60 @@ class reducedHessian(spla.LinearOperator):
         uhat   = spla.spsolve(me.Ju, me.r3 - me.Jm.dot(mhat))
         lamhat = spla.spsolve(me.JuT, me.r1 - me.Wuu.dot(uhat) - me.Wum.dot(mhat))
         return np.concatenate([uhat, mhat, lamhat])
+    def computeEigs(me):
+        # ------ form the linearized parameter to PDE-solution mapping Ju^-1 Jm
+        n2 = me.Jm.shape[1]
+        JuinvJm = np.zeros((me.n1, n2))
+        ei = np.zeros(n2)
+        for i in range(n2):
+            ei[i] = 1.0
+            JuinvJm[:, i] = spla.spsolve(me.Ju, me.Jm.dot(ei)) 
+            ei[i] = 0.0
+        # compute singular values of generally non-square array Ju^-1 Jm
+        me.sigsJuinvJm = svdvals(JuinvJm)
+
+        # --------- form the Gauss-Newton data misfit Hessian
+        GSdatamisfitHessian = np.zeros((n2, n2))
+        for i in range(n2):
+            ei[i] = 1.0
+            GSdatamisfitHessian[:, i] = me.GNdot(ei, misfit_only=True)
+            ei[i] = 0.0
+        # compute eigenvalues of the symmetric operator
+        me.eigsGSdatamisfitHessian = eigvalsh(GSdatamisfitHessian)[::-1]
+
+        # --------- form the remaining piece of the Gauss-Newton data misfit Hessian
+        notGSdatamisfitHessian = np.zeros((n2, n2))
+        for i in range(n2):
+            ei[i] = 1.0
+            notGSdatamisfitHessian[:, i] = me.notGNdot(ei)
+            ei[i] = 0.0
+        # compute eigenvalues of the symmetric operator
+        me.eigsnotGSdatamisfitHessian = eigvalsh(notGSdatamisfitHessian)[::-1]
+        
+        reg_status = me.regularization
+        me.regularization = False
+        datamisfitHessian = np.zeros((n2, n2))
+        for i in range(n2):
+            ei[i] = 1.0
+            datamisfitHessian[:, i] = me.dot(ei)
+            ei[i] = 0.0
+        me.regularization = reg_status
+        me.eigsdatamisfitHessian = eigvalsh(datamisfitHessian)[::-1]
+        
+        # ------ compute similar quantities but preconditioned by Wmm
+        Wmm = me.Wmm.todense()
+        me.eigsWmminvGSdatamisfitHessian = eigvalsh(GSdatamisfitHessian, b=Wmm)
+        me.eigsWmminvnotGSdatamisfitHessian = eigvalsh(notGSdatamisfitHessian, b=Wmm)
+        me.eigsWmminvdatamisfitHessian = eigvalsh(datamisfitHessian, b=Wmm)
+
+
+
+        
+
+
+
+
+
 
 class regularizationSmoother(spla.LinearOperator):
     def __init__(me, Wmm):
