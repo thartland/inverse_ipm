@@ -198,9 +198,20 @@ class interior_pt:
                 M = self.multiGridHierarchy.constructPreconditioner(A, strategy=2)
             if self.linsolve_strategy == "direct":
                 sol = spla.spsolve(A, b)
+                info = 0
+                Hreduced = reducedHessian(W, JT, J, self.problem.n1)
+                Hreduced.computeEigs()
+                np.savetxt("sigsJuinvJm"+str(self.it)+".dat", Hreduced.sigsJuinvJm)
+                np.savetxt("eigsGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsGSdatamisfitHessian)
+                np.savetxt("eigsnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsnotGSdatamisfitHessian)
+                np.savetxt("eigsdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsdatamisfitHessian)
+                np.savetxt("eigsWmminvGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvGSdatamisfitHessian)
+                np.savetxt("eigsWmminvnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvnotGSdatamisfitHessian)
+                np.savetxt("eigsWmminvdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvdatamisfitHessian)
             elif self.linsolve_strategy == "reduced":
                 Hreduced = reducedHessian(W, JT, J, self.problem.n1)
                 breduced = Hreduced.preprhs(b)
+                
                 krylov_convergence = Krylov_convergence(Hreduced, breduced)
                 m, info = spla.gmres(Hreduced, breduced, tol=lintol, atol=lintol, \
                         M=M, maxiter=maxiter, callback=krylov_convergence.callback)
@@ -228,7 +239,8 @@ class interior_pt:
                     print("res = {0:1.3e}".format(res))
                 raise RuntimeError("linear solve failure!")
             else:
-                self.residuals.append(krylov_convergence.residuals)
+                if not self.linsolve_strategy == "direct":
+                    self.residuals.append(krylov_convergence.residuals)
         else:
             sol = np.linalg.solve(A, b)
         return sol 
