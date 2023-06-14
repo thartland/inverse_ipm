@@ -8,11 +8,13 @@ import problems as problemDefs
 from pyamg.krylov import gmres
 
 class interior_pt:
-    def __init__(self, problems, linsolve_strategy, outerlin_tol=1.e-12, outerlin_maxiter = 300, reducedprecond_strategy="regularization"):
+    def __init__(self, problems, linsolve_strategy, outerlin_tol=1.e-12, outerlin_maxiter = 300, reducedprecond_strategy="regularization", saveSpectra=False, gaussNewtonInertiaRegularization=False):
         self.problems = problems
 
         self.outerlin_tol = outerlin_tol
         self.outerlin_maxiter = outerlin_maxiter
+        self.saveSpectra = saveSpectra
+        self.gaussNewtonInertiaRegularization = gaussNewtonInertiaRegularization
 
         problemDefMembers = inspect.getmembers(problemDefs, inspect.isclass)
         problemDefTypes   = [problemDefMembers[i][1] for i in range(len(problemDefMembers))]
@@ -117,14 +119,16 @@ class interior_pt:
         self.alphad = 1.e-11
 
         # maximum inertia correction attempts
-        self.max_ic = 20
+        self.max_ic = 30
 
         # inertia-correction algorithm parameters (taken from Wachter-Biegler, Algorithm IC)
         self.kappaminus   = 1. / 3.
         self.delta0       = 1.e-4
-        self.kappahatplus = 100.
+        self.kappahatplus = 1.e2
         self.kappaplus    = 8.
-        self.deltamin     = 1.e-20 # not as in Wachter-Biegler
+        self.deltamin     = 1.e-20
+
+        self.inertia_corrections = []
 
         
     def initialize(self, X):
@@ -199,15 +203,17 @@ class interior_pt:
             if self.linsolve_strategy == "direct":
                 sol = spla.spsolve(A, b)
                 info = 0
-                Hreduced = reducedHessian(W, JT, J, self.problem.n1)
-                Hreduced.computeEigs()
-                np.savetxt("sigsJuinvJm"+str(self.it)+".dat", Hreduced.sigsJuinvJm)
-                np.savetxt("eigsGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsGSdatamisfitHessian)
-                np.savetxt("eigsnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsnotGSdatamisfitHessian)
-                np.savetxt("eigsdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsdatamisfitHessian)
-                np.savetxt("eigsWmminvGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvGSdatamisfitHessian)
-                np.savetxt("eigsWmminvnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvnotGSdatamisfitHessian)
-                np.savetxt("eigsWmminvdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvdatamisfitHessian)
+                if self.saveSpectra:
+                    Hreduced = reducedHessian(W, JT, J, self.problem.n1)
+                    
+                    Hreduced.computeEigs()
+                    np.savetxt("sigsJuinvJm"+str(self.it)+".dat", Hreduced.sigsJuinvJm)
+                    np.savetxt("eigsGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsGSdatamisfitHessian)
+                    np.savetxt("eigsnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsnotGSdatamisfitHessian)
+                    np.savetxt("eigsdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsdatamisfitHessian)
+                    np.savetxt("eigsWmminvGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvGSdatamisfitHessian)
+                    np.savetxt("eigsWmminvnotGSdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvnotGSdatamisfitHessian)
+                    np.savetxt("eigsWmminvdatamisfitHessian"+str(self.it)+".dat", Hreduced.eigsWmminvdatamisfitHessian)
             elif self.linsolve_strategy == "reduced":
                 Hreduced = reducedHessian(W, JT, J, self.problem.n1)
                 breduced = Hreduced.preprhs(b)
@@ -279,7 +285,7 @@ class interior_pt:
         # use same regularization for soc as for the step computation
         if soc:
             if self.sparse_struct:
-                Ak[:self.n,:self.n] += self.deltalast * sps.identity(self.n)
+                Ak[:self.n,:self.n] += self.deltalast * self.problem.Mx#sps.identity(self.n)
             else:
                 Ak[:self.n,:self.n] += self.deltalast * np.identity(self.n)
         
@@ -298,43 +304,64 @@ class interior_pt:
         # ---- inertia-free inertia-correction scheme
         Wk      = Ak[:self.idx1, :self.idx1]
 
-        if np.inner(xhat, Wk.dot(xhat)) + max(0, -1.*np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
+        inertia_corrections = 0
+        if np.inner(xhat, Wk.dot(xhat)) + max(0, -1.*np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, self.problem.Mx.dot(xhat)):
             zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
             self.deltalast = 0.
+            self.inertia_corrections.append(inertia_corrections)
             print("NO INERTIA CORRECTION WAS REQUIRED")
             return xhat, lamhat, zhat
         else:
-            print("INERTIA CORRECTION REQUIRED")
-            if self.deltalast == 0.:
-                delta = self.delta0
-            else:
-                delta = max(self.deltamin, self.kappaminus*self.deltalast)
-            j_ic = 0
-            while j_ic < self.max_ic:
-                if self.sparse_struct:
-                    Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * sps.identity(self.idx1), Ak[:self.idx1, self.idx1:]],\
-                                        [Ak[self.idx1:, :self.idx1], None]], format="csr")
+            print("Inertia regularization required")
+            
+            if not self.gaussNewtonInertiaRegularization:
+                if self.deltalast == 0.:
+                    delta = self.delta0
                 else:
-                    Akdelta = np.zeros((self.idx2, self.idx2))
-                    Akdelta[:,:] = Ak[:,:]
-                    Akdelta[:self.idx1, :self.idx1] += delta * np.identity(self.idx1)
-                Wk        = Akdelta[:self.idx1, :self.idx1]
-                sol       = self.linsolve(Akdelta, -rk)
+                    delta = max(self.deltamin, self.kappaminus*self.deltalast)
+                j_ic = 0
+                while j_ic < self.max_ic:
+                    inertia_corrections = inertia_corrections + 1
+                    if self.sparse_struct:
+                        Akdelta = sps.bmat([[Ak[:self.idx1, :self.idx1] + delta * self.problem.Mx, Ak[:self.idx1, self.idx1:]],\
+                                            [Ak[self.idx1:, :self.idx1], None]], format="csr")
+                    else:
+                        Akdelta = np.zeros((self.idx2, self.idx2))
+                        Akdelta[:,:] = Ak[:,:]
+                        Akdelta[:self.idx1, :self.idx1] += delta * np.identity(self.idx1)
+                    Wk[:,:]   = Akdelta[:self.idx1, :self.idx1]
+                    sol       = self.linsolve(Akdelta, -rk)
+                    xhat[:]   = sol[:self.idx1]
+                    lamhat[:] = sol[self.idx1:]
+                    lamplus   = (lamhat + lam)
+                    if np.inner(xhat, Wk.dot(xhat)) + max(0., -np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, self.problem.Mx.dot(xhat)):
+                        zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
+                        self.deltalast = delta
+                        print("inertia correction = {0:1.3e}".format(delta))
+                        self.inertia_corrections.append(inertia_corrections)
+                        return xhat, lamhat, zhat
+                    elif self.deltalast == 0.:
+                        delta = self.kappahatplus * delta
+                    else:
+                        delta = self.kappaplus * delta
+                    j_ic += 1
+                if j_ic == self.max_ic:
+                    print("WAS NOT ABLE TO SATISFY THE CURVATURE CONDITIONS OF THE INERTIA-FREE REGULARIZATION SCHEME!!!")
+            else:
+                Wk[       :self.n1, self.n1:self.n ]  = 0. * Wk[:self.n1, self.n1:self.n ]
+                Wk[self.n1:self.n,         :self.n1]  = 0. * Wk[self.n1:self.n,  :self.n1]
+                AkGN = sps.bmat([[    Wk,            Ak[:self.idx1, self.idx1:]],\
+                                       [Ak[self.idx1:, :self.idx1], None]], format="csr")
+                sol = self.linsolve(AkGN, -rk)
                 xhat[:]   = sol[:self.idx1]
                 lamhat[:] = sol[self.idx1:]
-                lamplus   = (lamhat + lam)
-                if np.inner(xhat, Wk.dot(xhat)) + max(0, -np.inner(lamplus, rk[self.idx1:])) >= self.alphad * np.inner(xhat, xhat):
-                    zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))  
-                    self.deltalast = delta
-                    print("inertia correction = {0:1.3e}".format(delta))
-                    return xhat, lamhat, zhat
-                elif self.deltalast == 0.:
-                    delta = self.kappahatplus * delta
-                else:
-                    delta = self.kappaplus * delta
-                j_ic += 1
-            if j_ic == self.max_ic:
-                print("WAS NOT ABLE TO SATISFY THE CURVATURE CONDITIONS OF THE INERTIA-FREE REGULARIZATION SCHEME!!!")
+                zhat[:] = -1.*(z[:] + (z[:]*rhohat[:] - mu) / (rho[:] - self.rhol[:]))
+                inertia_corrections = 1
+                self.inertia_corrections.append(inertia_corrections)  
+                return xhat, lamhat, zhat
+              
+                
+                  
     def soc_solve(self, X, mu):
         return self.pKKT_solve(X, mu, soc=True)
 
@@ -561,6 +588,7 @@ class interior_pt:
                 # Re-initialize the filter for the new barrier subproblem
                 self.F = [[self.theta_max, -1.*np.inf]]
             
+            print("E(x, mu) = ", self.problem.E(X, mu, self.smax))
             # -------- Obtain search direction from perturbed KKT system
             # A-4
             Xhat[0], Xhat[1], \
